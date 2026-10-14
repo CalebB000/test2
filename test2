@@ -1,1 +1,3706 @@
-https://api.luarmor.net/files/v4/loaders/95211f592ad51ab9c33219aeb6ab54ca.lua
+-- Game Detection
+local gameID = game.PlaceId
+local isDaHood = (gameID == 2788229376)
+local isDerHood = not isDaHood
+
+-- Adonis Bypass
+if getgenv().BYPASSED_ADONIS ~= true then
+    local ok = pcall(function()
+        local ScriptContext = game:service("ScriptContext")
+        local LP            = game:service("Players").LocalPlayer
+        ScriptContext:SetTimeout(1)
+        local Kick; Kick = hookfunction(LP.Kick, function(...)
+            if checkcaller() or tostring(getcallingscript()) ~= "ClientMover" then return Kick(...) end
+        end)
+        local DI; DI = hookfunction(debug.info, function(...)
+            if checkcaller() or tostring(getcallingscript()) ~= "ClientMover" or select(2,...) ~= "slanf" then return DI(...) end
+            return coroutine.yield()
+        end)
+        for _, v in getgc(true) do
+            if type(v) ~= "table" then continue end
+            local Kill     = rawget(v, "Kill")
+            local Detected = rawget(v, "Detected")
+            if type(Kill)     == "function" and debug.info(Kill,"s")     == ".Client.Client"     then hookfunction(Kill,     function() end) end
+            if type(Detected) == "function" and debug.info(Detected,"s") == ".Client.Core.Anti"  then hookfunction(Detected, function() end) end
+        end
+        setfflag("DebugRunParallelLuaOnMainThread","true")
+    end)
+    if ok then getgenv().BYPASSED_ADONIS = true end
+    task.wait(0.5)
+end
+
+-- =============================================================
+-- SPREAD MODIFICATION SYSTEM
+-- =============================================================
+
+if getgenv().Euleon["SpreadMod"]["Enabled"] then
+    local math_random_old
+    math_random_old = hookfunction(math.random, newcclosure(function(...)
+        if checkcaller() then return math_random_old(...) end
+        local spread = getgenv().Euleon["SpreadMod"]["BulletSpread"]
+        if spread and spread["Enabled"] then
+            local args = {...}
+            local a1, a2 = args[1], args[2]
+            if (#args == 0) or (a1 == -0.05 and a2 == 0.05) or (a1 == -0.1) or (a1 == -0.05) then
+                return math_random_old(...) * (spread["Amount"] / 100)
+            end
+        end
+        return math_random_old(...)
+    end))
+    getgenv().Euleon_OldRandom = math_random_old
+end
+
+local Euleon_Connections = {}
+
+local cachedPlayers = {}
+local espUpdateCounter = 0
+local espUpdateInterval = 1  -- Update ESP every frame but throttle heavy ops
+
+local function DestroyHairAndAccessories(character)
+    if not character then return end
+    
+    
+    local head = character:FindFirstChild("Head")
+    if not head then return end
+    
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") and part.Name == "Hair" then
+            pcall(function() part:Destroy() end)
+        end
+    end
+    
+    for _, acc in ipairs(character:GetChildren()) do
+        if acc:IsA("Accessory") then
+            local handle = acc:FindFirstChild("Handle")
+            if handle then
+                local weld = handle:FindFirstChild("AccessoryWeld") or handle:FindFirstChildOfClass("Weld")
+                if weld then
+                    local part0 = weld.Part0
+                    local part1 = weld.Part1
+                    
+                    if (part0 and part0.Name == "Head") or (part1 and part1.Name == "Head") then
+                        pcall(function() acc:Destroy() end)
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function RestoreHairAndAccessories(character)
+    if not character then return end
+    
+    
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.LocalTransparencyModifier = 0
+        end
+    end
+    
+end
+
+local hairDestroyed = false
+
+local Euleon_Drawings = {}
+
+if not _G.ESPFilteredPlayers then _G.ESPFilteredPlayers = {} end
+if not _G.ESPWhitelistedPlayers then _G.ESPWhitelistedPlayers = {} end
+if not _G.TargetESPedPlayersMode then _G.TargetESPedPlayersMode = false end
+
+local function cfg_silent() return getgenv().Euleon["Silent"]["Main"] end
+local function cfg_sfov() return getgenv().Euleon["Silent"]["FOV"] end
+local function cfg_misc() return getgenv().Euleon["Misc"] end
+local function cfg_esp() return getgenv().Euleon["ESP"] end
+local function cfg_camlock() return getgenv().Euleon["Camlock"] end
+local function cfg_checks() return getgenv().Euleon["Checks"] end
+local function cfg_hitsound() return getgenv().Euleon["Hitsound"] end
+local function cfg_visuals() return getgenv().Euleon["Visuals"] end
+
+local plrs = game:GetService("Players")
+local rs = game:GetService("RunService")
+local uis = game:GetService("UserInputService")
+local c = workspace.CurrentCamera
+local lplr = plrs.LocalPlayer
+local mouse = lplr:GetMouse()
+local PhysicsService = game:GetService("PhysicsService")
+
+local modList = {
+    [7104360101] = true, [1630631832] = true, [3901350483] = true, [5499351252] = true,
+    [5638950056] = true, [3965056638] = true, [329009946] = true, [608689774] = true,
+    [8053743539] = true, [930196928] = true, [2484068989] = true, [150714119] = true,
+    [3314342033] = true, [842924] = true, [10677518867] = true, [9394974653] = true,
+    [502724508] = true, [3729571335] = true, [3801863366] = true, [225761156] = true,
+    [8841845057] = true, [10757180044] = true, [557010309] = true, [7048576499] = true,
+    [2459866884] = true, [1849935648] = true, [3056102912] = true, [7432915789] = true,
+    [1305046162] = true,
+}
+
+if getgenv().Euleon["Security"]["ModCheck"] then
+    local function checkMod(player)
+        return modList[player.UserId] == true
+    end
+    for _, player in pairs(plrs:GetPlayers()) do
+        if player ~= lplr and checkMod(player) then
+            game:Shutdown()
+        end
+    end
+    table.insert(Euleon_Connections, plrs.PlayerAdded:Connect(function(player)
+        if player ~= lplr and checkMod(player) then
+            game:Shutdown()
+        end
+    end))
+end
+
+
+table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(character)
+    if getgenv().Euleon.Misc.ClientRemoveAccs.Enabled then
+        task.wait(0.1)
+        hairDestroyed = true
+        DestroyHairAndAccessories(character)
+    end
+    
+    SilentTarget = nil
+    CachedAimPart = nil
+    CachedAimPosition = nil
+    
+    -- Reset active flags to match config on spawn
+    speedwalkActive = getgenv().Euleon["Movement"]["SpeedWalk"]["Enabled"]
+    -- DON'T reset jumpowerActive - let the player keep their toggle setting across respawns
+    
+    if targetDeathConnection then
+        targetDeathConnection:Disconnect()
+        targetDeathConnection = nil
+    end
+    
+    if isDerHood and wall and wall.Parent then
+        wall.Position = Vector3.new(0, -9999, 0)
+    end
+end))
+
+if getgenv().Euleon.Misc.ClientRemoveAccs.Enabled and lplr.Character then
+    task.wait(0.1)
+    hairDestroyed = true
+    DestroyHairAndAccessories(lplr.Character)
+end
+
+local function HookCharacterForHair(character)
+    if not character then return end
+    
+    table.insert(Euleon_Connections, character.DescendantAdded:Connect(function(descendant)
+        if not getgenv().Euleon.Misc.ClientRemoveAccs.Enabled then return end
+        
+        if descendant:IsA("BasePart") and descendant.Name == "Hair" then
+            pcall(function() descendant:Destroy() end)
+        end
+        
+        if descendant:IsA("Accessory") then
+            local handle = descendant:FindFirstChild("Handle")
+            if handle then
+                local weld = handle:FindFirstChild("AccessoryWeld") or handle:FindFirstChildOfClass("Weld")
+                if weld then
+                    local part0 = weld.Part0
+                    local part1 = weld.Part1
+                    
+                    if (part0 and part0.Name == "Head") or (part1 and part1.Name == "Head") then
+                        pcall(function() descendant:Destroy() end)
+                    end
+                end
+            end
+        end
+    end))
+end
+
+if lplr.Character then
+    HookCharacterForHair(lplr.Character)
+end
+
+table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(character)
+    task.wait(0.05)
+    HookCharacterForHair(character)
+end))
+
+local beamDefaults = {}
+local closestPlayerRef = nil
+local previousClosestPlayerRef = nil  -- Track previous target for cleanup  -- Reference to current target
+
+local function extendBeams()
+    table.insert(Euleon_Connections, workspace.Ignored.Siren.Radius.ChildAdded:Connect(function(part)
+        if part.Name == "BULLET_RAYS" then
+            task.spawn(function()
+                task.wait(0.001)
+                local beam = part:FindFirstChild("NewGunBeam")
+                if beam and beam:IsA("Beam") and beam.Attachment0 and beam.Attachment1 then
+                    local ownerName = part:GetAttribute("OwnerCharacter")
+                    local isYourBullet = (ownerName and ownerName == lplr.Name)
+                    local isTargetBullet = (closestPlayerRef and ownerName and ownerName == closestPlayerRef.Name)
+                    
+                    local att0 = beam.Attachment0
+                    local att1 = beam.Attachment1
+                    local beamKey = tostring(part)
+                    
+                    if not beamDefaults[beamKey] then
+                        beamDefaults[beamKey] = att1.Position
+                    end
+                    
+                    if isTargetBullet then
+                    elseif isYourBullet then
+                        -- Only extend beam if we have a valid target with cached aim position
+                        if closestPlayerRef and closestPlayerRef.Character and CachedAimPosition then
+                            local targetHRP = closestPlayerRef.Character:FindFirstChild("HumanoidRootPart")
+                            if targetHRP then
+                                local startPos = att0.WorldPosition
+                                local distToTarget = (targetHRP.Position - startPos).Magnitude
+                                
+                                if distToTarget > 5 then
+                                    att1.Position = Vector3.new(0, 0, -distToTarget)
+                                else
+                                    att1.Position = beamDefaults[beamKey]
+                                end
+                            end
+                        else
+                            -- No valid target, use default beam position
+                            att1.Position = beamDefaults[beamKey]
+                        end
+                    end
+                    
+                    part.AncestryChanged:Connect(function(child, parent)
+                        if parent == nil then
+                            beamDefaults[beamKey] = nil
+                        end
+                    end)
+                end
+            end)
+        end
+    end))
+end
+
+extendBeams()
+
+task.spawn(function()
+    while task.wait(60) do
+        local count = 0
+        for _ in pairs(beamDefaults) do count = count + 1 end
+        if count > 100 then
+            beamDefaults = {}
+        end
+    end
+end)
+
+local function IsAlive(player)
+    if not player or not player.Character then return false end
+    local hum = player.Character:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    if hum:GetState() == Enum.HumanoidStateType.Dead then return false end
+    
+    local be = player.Character:FindFirstChild("BodyEffects")
+    if be then
+        if be:FindFirstChild("K.O") and be["K.O"].Value == true then return false end
+        if be:FindFirstChild("Dead") and be["Dead"].Value == true then return false end
+    end
+    return true
+end
+
+
+local CachedAimPart = nil
+local SilentTarget = nil
+local SilentTargetVisible = false  -- Track if target is visible and not behind wall
+local camlockActive = false
+local camlockTarget = nil
+
+-- Runtime active flags for movement features (initialize from config)
+local speedwalkActive = getgenv().Euleon["Movement"]["SpeedWalk"]["Enabled"]
+local jumpowerActive = getgenv().Euleon["Movement"]["JumpPower"]["Enabled"]
+local gun_handler = nil
+local gun_handler_active = false
+local FrameThrottleCounter = 0
+local gunMacroTarget = nil  -- Lock to gun macro's target during shooting
+local holdshoot_active = false
+
+-- Teleport Hold Mode variables
+local teleportHolding = false
+local teleportTarget = nil
+local teleportLastUpdate = 0
+local holdModeCollisionsDisabled = {}
+
+-- BypassVoidUsers Desync variables
+local bypassVoidDesyncActive = false
+local bypassVoidSavedCFrame = nil
+local bypassVoidHooked = false
+local bypassVoidOrbitAngle = 0
+local bypassVoidOrbitRadius = 5
+
+-- Chams variables
+local lastChamsTarget = nil
+
+
+local function IsRevolverEquipped()
+    if not lplr or not lplr.Character then return false end
+    local tool = lplr.Character:FindFirstChildOfClass("Tool")
+    if tool and (tool.Name == "[Revolver]" or tool.Name:lower():find("revolver")) then
+        return true
+    end
+    return false
+end
+
+local function HasValidWeapon()
+    if not lplr or not lplr.Character then return false end
+    local tool = lplr.Character:FindFirstChildOfClass("Tool")
+    if not tool then return false end  -- No tool equipped
+    if tool.Name == "[Knife]" then return false end  -- Knife equipped, not a weapon
+    if tool.Name:lower():find("knife") then return false end
+    return true  -- Valid weapon equipped
+end
+
+local wall = nil
+local wall_parts = {}
+local wall_loop = nil
+
+local function getWallSize(distance)
+    if not distance then distance = 65 end
+    if not getgenv().Euleon or not getgenv().Euleon["ExtendedBullet"] then
+        return Vector3.new(20, 40, 20)
+    end
+    
+    local maxDist = getgenv().Euleon["ExtendedBullet"]["MaxDistance"] or 65
+    local buffer = 20
+    local baseSize = Vector3.new(20, 40, 20)
+    
+    -- Calculate scale, but clamp to minimum 0.2 instead of 0 to handle close range (teleport)
+    local scale = (distance - buffer) / (maxDist - buffer)
+    if scale < 0.2 then scale = 0.2 end  -- Minimum size of 0.2 scale instead of 0
+    if scale > 1 then scale = 1 end      -- Cap at 1 for max size
+    
+    return Vector3.new(baseSize.X * scale, baseSize.Y * scale, baseSize.Z * scale)
+end
+
+local function createWall()
+    if wall then return end
+    wall = Instance.new("Part")
+    wall.Name = "ExtendedBullet"
+    wall.Shape = Enum.PartType.Block
+    wall.Size = getWallSize()
+    wall.Color = Color3.fromRGB(255, 0, 0)
+    wall.Material = Enum.Material.Neon
+    wall.CanCollide = false
+    wall.CanQuery = true
+    wall.Anchored = true
+    wall.Parent = workspace
+end
+
+local function removeWall()
+    if wall_loop then wall_loop:Disconnect() end
+    if wall then wall:Destroy() end
+    for _, w in ipairs(wall_parts) do
+        if w and w.Parent then w:Destroy() end
+    end
+    wall_parts = {}
+    wall = nil
+end
+
+local function ClearSilentAimBox()
+    if wall and wall.Parent then wall:Destroy() end
+    for _, w in ipairs(wall_parts) do
+        if w and w.Parent then w:Destroy() end
+    end
+    wall_parts = {}
+    wall = nil
+end
+
+
+local monitoredPlayers = {}
+
+
+local cachedAlivePlayers = {}
+
+for _, player in pairs(plrs:GetPlayers()) do
+    if player ~= lplr then
+        table.insert(cachedAlivePlayers, player)
+    end
+end
+
+local function GetPlayers()
+    local players = {}
+    for _, player in ipairs(cachedAlivePlayers) do
+        if player and IsAlive(player) then
+            table.insert(players, player)
+        end
+    end
+    return players
+end
+
+local function GetAllPlayers()
+    local players = {}
+    for _, player in ipairs(cachedAlivePlayers) do
+        if player then
+            table.insert(players, player)
+        end
+    end
+    return players
+end
+
+table.insert(Euleon_Connections, plrs.PlayerAdded:Connect(function(player)
+    table.insert(cachedAlivePlayers, player)
+end))
+
+table.insert(Euleon_Connections, plrs.PlayerRemoving:Connect(function(player)
+    for i, p in ipairs(cachedAlivePlayers) do
+        if p == player then
+            table.remove(cachedAlivePlayers, i)
+            break
+        end
+    end
+    if monitoredPlayers[player] then
+        monitoredPlayers[player] = nil
+    end
+end))
+
+local R15_PARTS = {
+    "Head", "UpperTorso", "LowerTorso",
+    "LeftUpperArm", "LeftLowerArm", "LeftHand",
+    "RightUpperArm", "RightLowerArm", "RightHand",
+    "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
+    "RightUpperLeg", "RightLowerLeg", "RightFoot",
+}
+
+local function GetMouseVP()
+    local mouse = uis:GetMouseLocation()
+    return Vector2.new(mouse.X, mouse.Y)
+end
+
+local function BasicPoint(part)
+    if not part then return nil end
+    return part.Position + part.CFrame.UpVector * (part.Size.Y / 2)
+end
+
+local function GetClosestPointInternal(character, cp_cfg, ref_x, ref_y)
+    if not (character and character.Parent) then return nil end
+    local mode    = cp_cfg["Mode"] or "Advanced"
+    local scale   = cp_cfg["Scale"] or 5.5
+    local density = math.clamp(cp_cfg["Density"] or 2, 1, 4)
+    local sf      = math.clamp(scale, 0, 10) / 10
+    local bd      = 1e9
+    local bp, bpos
+    local parts = {}
+    for i = 1, #R15_PARTS do
+        local part = character:FindFirstChild(R15_PARTS[i])
+        if part and part:IsA("BasePart") then
+            parts[#parts+1] = part
+        end
+    end
+    if mode == "Basic" then
+        for i = 1, #parts do
+            local cl = BasicPoint(parts[i])
+            if cl then
+                local s = c:WorldToViewportPoint(cl)
+                if s.Z > 0 then
+                    local d = (s.X-ref_x)^2 + (s.Y-ref_y)^2
+                    if d < bd then bd=d; bp=parts[i]; bpos=cl end
+                end
+            end
+        end
+    else
+        local so = {}
+        for j = 0, density-1 do so[j+1] = j / math.max(density-1, 1) end
+        for i = 1, #parts do
+            local part = parts[i]
+            local size = part.Size
+            local half = size * 0.5
+            local cf   = part.CFrame
+            local sh   = half * (1 - sf)
+            for z = 1, density do
+                local lz = math.clamp(-half.Z + so[z]*size.Z, -sh.Z, sh.Z)
+                for y = 1, density do
+                    local ly = math.clamp(-half.Y + so[y]*size.Y, -sh.Y, sh.Y)
+                    for x = 1, density do
+                        local lx = math.clamp(-half.X + so[x]*size.X, -sh.X, sh.X)
+                        local wp = cf:PointToWorldSpace(Vector3.new(lx,ly,lz))
+                        local s  = c:WorldToViewportPoint(wp)
+                        if s.Z > 0 then
+                            local d = (s.X-ref_x)^2 + (s.Y-ref_y)^2
+                            if d < bd then bd=d; bp=part; bpos=wp end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if bp then return {Part=bp, Position=bpos} end
+    local root = character:FindFirstChild("HumanoidRootPart")
+    return root and {Part=root, Position=root.Position}
+end
+
+local function GetClosestPoint(character, cp_cfg)
+    if not character or not cp_cfg or not cp_cfg["Enabled"] then return nil end
+    local mv = GetMouseVP()
+    return GetClosestPointInternal(character, cp_cfg, mv.X, mv.Y)
+end
+
+local function GetClosestPart(character)
+    if not character then return nil end
+    local bestPart = nil
+    local bestDist = math.huge
+    local mv = GetMouseVP()
+    
+    for _, partName in ipairs(R15_PARTS) do
+        local part = character:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            local screen = c:WorldToViewportPoint(part.Position)
+            if screen.Z > 0 then
+                local dist = (Vector2.new(screen.X, screen.Y) - mv).Magnitude
+                if dist < bestDist then
+                    bestDist = dist
+                    bestPart = part
+                end
+            end
+        end
+    end
+    
+    return bestPart
+end
+
+local function GetVelocity(character)
+    if not character then return Vector3.new(0,0,0) end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    return hrp and hrp.AssemblyLinearVelocity or Vector3.new(0,0,0)
+end
+
+local function ApplyPrediction(position, velocity, pred_cfg, distance)
+    if not position or not velocity then return position end
+    if not pred_cfg or type(pred_cfg) ~= "table" then return position end
+    if not pred_cfg["Enabled"] then return position end
+    local scalar = pred_cfg["Basic"] or 0
+    return position + velocity * scalar
+end
+
+-- Camlock Functions
+local function GetCamlockPosition(character, distance)
+    if not character then return nil end
+    local cfg = cfg_camlock()
+    if not cfg then return nil end
+    
+    local result = nil
+    pcall(function()
+        local closestMode = cfg["ClosestMode"]
+        local position = nil
+        
+        -- Get position using selected mode
+        if closestMode then
+            local mode = closestMode["Mode"] or "part"
+            
+            if mode == "point" then
+                -- Closest point mode - advanced raycasting
+                local cp_cfg = {
+                    ["Enabled"] = true,
+                    ["Mode"] = "Advanced",
+                    ["Scale"] = closestMode["PointScale"] or 5.5,
+                    ["Density"] = closestMode["PointDensity"] or 2,
+                }
+                local cp = GetClosestPoint(character, cp_cfg)
+                if cp then position = cp.Position end
+            elseif mode == "HeadOnly" then
+                -- Head only mode
+                local head = character:FindFirstChild("Head")
+                if head and head:IsA("BasePart") then
+                    position = head.Position
+                end
+            else
+                -- Closest part mode
+                local part = GetClosestPart(character)
+                if part then position = part.Position end
+            end
+        end
+        
+        -- Fallback to head
+        if not position then
+            local head = character:FindFirstChild("Head")
+            if head and head:IsA("BasePart") then
+                position = head.Position
+            end
+        end
+        
+        -- Fallback to HRP
+        if not position then
+            local hrp = character:FindFirstChild("HumanoidRootPart")
+            if hrp then position = hrp.Position end
+        end
+        
+        -- Apply prediction
+        if position then
+            local velocity = GetVelocity(character)
+            result = ApplyPrediction(position, velocity, cfg["Prediction"], distance or 0)
+        end
+    end)
+    return result
+end
+
+local function GetCamlockDistance(target)
+    if not target or not target.Character then return math.huge end
+    local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp or not lplr.Character then return math.huge end
+    local lhrp = lplr.Character:FindFirstChild("HumanoidRootPart")
+    if not lhrp then return math.huge end
+    return (hrp.Position - lhrp.Position).Magnitude
+end
+
+local function IsInCamlockFOV(target)
+    if not target or not target.Character then return false end
+    local cfg = cfg_camlock()
+    if not cfg or not cfg["ShowFOV"] then return true end
+    local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local screen, onScreen = c:WorldToViewportPoint(hrp.Position)
+    if not onScreen then return false end
+    local mouse = uis:GetMouseLocation()
+    local distance = (Vector2.new(screen.X, screen.Y) - mouse).Magnitude
+    return distance <= (cfg["Radius"] or 100)
+end
+
+local function WorldToScreen(position)
+    local screenPos, onScreen = c:WorldToViewportPoint(position)
+    return Vector2.new(screenPos.X, screenPos.Y), onScreen and screenPos.Z > 0
+end
+
+local function GetClosestPlayerInFOV()
+    local fov = getgenv().Euleon["Silent"]["FOV"]["Radius"]
+    local closestPlayer = nil
+    local closestDist = fov
+    local mousePos = uis:GetMouseLocation()
+    local player_hrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+    
+    if not player_hrp then return nil end
+    
+    local player_pos = player_hrp.Position
+    local max_range = 240  -- HARD LIMIT: 240 studs max range
+    
+    for _, player in pairs(GetPlayers()) do
+        if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then continue end
+        
+        if not IsAlive(player) then continue end
+        
+        local target_pos = player.Character.HumanoidRootPart.Position
+        local world_dist = (target_pos - player_pos).Magnitude
+        
+        if world_dist > max_range then continue end
+        
+        local isWhitelisted = false
+        for _, whitelistedName in pairs(_G.ESPWhitelistedPlayers) do
+            if whitelistedName == player.Name then
+                isWhitelisted = true
+                break
+            end
+        end
+        if isWhitelisted then continue end
+        
+        local screenPos, onScreen = WorldToScreen(target_pos)
+        if not onScreen then continue end
+        
+        local dist = (screenPos - mousePos).Magnitude
+        if dist < closestDist then
+            closestDist = dist
+            closestPlayer = player
+        end
+    end
+    
+    return closestPlayer
+end
+
+local function GetClosestPlayerToCursor()
+    local closestPlayer = nil
+    local closestDist = math.huge
+    local mousePos = uis:GetMouseLocation()
+    
+    for _, player in pairs(GetPlayers()) do
+        if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then continue end
+        
+        if not IsAlive(player) then continue end
+        
+        local target_pos = player.Character.HumanoidRootPart.Position
+        local screenPos, onScreen = WorldToScreen(target_pos)
+        if not onScreen then continue end
+        
+        local dist = (screenPos - mousePos).Magnitude
+        if dist < closestDist then
+            closestDist = dist
+            closestPlayer = player
+        end
+    end
+    
+    return closestPlayer
+end
+
+local function GetClosestESPedPlayer()
+    local closestPlayer = nil
+    local closestDist = math.huge
+    local player_hrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+    
+    if not player_hrp then return nil end
+    
+    local player_pos = player_hrp.Position
+    local max_range = 240  -- HARD LIMIT: 240 studs max range
+    
+    if #_G.ESPFilteredPlayers == 0 then
+        return nil
+    end
+    
+    for _, espedName in pairs(_G.ESPFilteredPlayers) do
+        local player = plrs:FindFirstChild(espedName)
+        if not player or player == lplr then continue end
+        if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then continue end
+        
+        if not IsAlive(player) then continue end
+        
+        local target_pos = player.Character.HumanoidRootPart.Position
+        local world_dist = (target_pos - player_pos).Magnitude
+        
+        if world_dist > max_range then continue end
+        
+        local isWhitelisted = false
+        for _, whitelistedName in pairs(_G.ESPWhitelistedPlayers) do
+            if whitelistedName == player.Name then
+                isWhitelisted = true
+                break
+            end
+        end
+        if isWhitelisted then continue end
+        
+        local screenPos, onScreen = WorldToScreen(target_pos)
+        if not onScreen then continue end
+        
+        if world_dist < closestDist then
+            closestDist = world_dist
+            closestPlayer = player
+        end
+    end
+    
+    if not closestPlayer then
+    end
+    
+    return closestPlayer
+end
+
+local function SanitizeDisplayName(displayName)
+    local sanitized = displayName:gsub("[^%w%s%p]", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    
+    if sanitized == "" or sanitized:len() == 0 then
+        return "???"
+    end
+    
+    return sanitized
+end
+
+-- Camlock-specific wall check (doesn't use Silent settings)
+local function CamlockWallCheck(player)
+    if not player.Character then return false end
+    
+    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    
+    local excludeList = {lplr.Character}
+    for _, p in pairs(GetAllPlayers()) do
+        if p.Character then
+            table.insert(excludeList, p.Character)
+        end
+    end
+    
+    if wall then
+        table.insert(excludeList, wall)
+    end
+    
+    for _, w in ipairs(wall_parts) do
+        if w then
+            table.insert(excludeList, w)
+        end
+    end
+    
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = excludeList
+    
+    local origin = c.CFrame.Position
+    local direction = (hrp.Position - origin)
+    local result = workspace:Raycast(origin, direction, rayParams)
+    
+    if not result then return true end
+    
+    return result.Instance:IsDescendantOf(player.Character)
+end
+
+local function GetSilentAimPart(player)
+    if not player.Character then return nil end
+    
+    local mousePos = uis:GetMouseLocation()
+    local cfg = cfg_silent()
+    if not cfg then return nil end
+    
+    local closestMode = cfg["ClosestMode"]
+    local mode = closestMode and closestMode["Mode"] or "part"
+    
+    local parts = {"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "RightUpperLeg"}
+    
+    -- Handle different modes
+    if mode == "HeadOnly" then
+        parts = {"Head"}
+    elseif mode == "minimal" then
+        parts = {"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "RightUpperLeg"}
+    end
+    
+    local closest_part = nil
+    local closest_dist = math.huge
+    
+    for _, part_name in ipairs(parts) do
+        local part = player.Character:FindFirstChild(part_name)
+        if part and part:IsA("BasePart") then
+            local screenPos = c:WorldToViewportPoint(part.Position)
+            if screenPos.Z > 0 then
+                local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                if dist < closest_dist then
+                    closest_dist = dist
+                    closest_part = part
+                end
+            end
+        end
+    end
+    
+    return closest_part
+end
+
+local fov_throttle = 0
+
+local targetDeathConnection = nil
+
+local function setupTargetDeathListener(target)
+    if targetDeathConnection then
+        targetDeathConnection:Disconnect()
+        targetDeathConnection = nil
+    end
+    
+    if not target or not target.Character then return end
+    
+    local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    targetDeathConnection = humanoid.Died:Connect(function()
+        SilentTarget = nil
+        CachedAimPart = nil
+        CachedAimPosition = nil
+        if isDerHood and wall and wall.Parent then
+            wall.Position = Vector3.new(0, -9999, 0)
+        end
+    end)
+end
+
+local function UpdateCachedAim()
+    CachedAimPart = nil
+    CachedAimPosition = nil
+    closestPlayerRef = nil
+    
+    if not getgenv().Euleon["Silent"]["Enabled"] or not getgenv().Euleon["Silent"]["Main"]["Enabled"] then
+        return
+    end
+    
+    if cfg_misc()["AutoShoot"]["Enabled"] then
+        return
+    end
+    
+    fov_throttle = (fov_throttle + 1) % 2
+    if fov_throttle == 0 then
+        if ik_executing and gunMacroTarget then
+            SilentTarget = gunMacroTarget
+        elseif _G.TargetESPedPlayersMode then
+            SilentTarget = GetClosestESPedPlayer()
+            if not SilentTarget then
+                SilentTarget = GetClosestPlayerInFOV()
+            end
+        else
+            SilentTarget = GetClosestPlayerInFOV()
+        end
+    end
+    
+    if not SilentTarget or not SilentTarget.Character then
+        return
+    end
+    
+    local part = GetSilentAimPart(SilentTarget)
+    if not part then
+        return
+    end
+    
+    if getgenv().Euleon["Checks"]["WallCheck"] then
+        local wallCheckResult = CamlockWallCheck(SilentTarget)
+        if not wallCheckResult then
+            return
+        end
+    end
+    
+    if not HasValidWeapon() then
+        return
+    end
+    
+    if not IsRevolverEquipped() then
+        local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+        local thrp = SilentTarget.Character:FindFirstChild("HumanoidRootPart")
+        if lhrp and thrp then
+            local distance = (thrp.Position - lhrp.Position).Magnitude
+            if distance > getgenv().Euleon["ExtendedBullet"]["MaxDistance"] then
+                return
+            end
+        end
+    end
+    
+    CachedAimPart = part
+    CachedAimPosition = part.Position
+    
+    if getgenv().Euleon["Silent"]["Main"]["Prediction"]["Enabled"] then
+        pcall(function()
+            local vel = GetVelocity(SilentTarget.Character)
+            if vel then
+                CachedAimPosition = CachedAimPosition + (vel * getgenv().Euleon["Silent"]["Main"]["Prediction"]["Value"])
+            end
+        end)
+    end
+    
+    SilentTargetVisible = true
+    closestPlayerRef = SilentTarget
+end
+
+do
+    local ok, gh = pcall(function()
+        return require(game:GetService("ReplicatedStorage"):WaitForChild("Modules",5):WaitForChild("GunHandler",5))
+    end)
+    if ok and gh and gh.shoot then
+        gun_handler = gh
+        gun_handler_active = true
+    else
+    end
+end
+
+
+
+if gun_handler_active then
+    local orig_shoot = gun_handler.shoot
+    local ClientBulletHooked = false
+    local lastHitsoundTime = 0
+    local hitsoundCooldown = 0.2  -- Prevent playing more than once per 0.2 seconds
+    
+    local function HookClientBullet()
+        if ClientBulletHooked then return end
+        
+        gun_handler.shoot = function(args)
+            if not getgenv().Euleon["Silent"]["RevClientBulletRedirection"]["Enabled"] then
+                return orig_shoot(args)
+            end
+            
+            -- SNAP CAMERA TO TARGET if gunMacroTarget is active
+            local originalCFrame = c.CFrame
+            if gunMacroTarget and gunMacroTarget.Character then
+                local targetHRP = gunMacroTarget.Character:FindFirstChild("HumanoidRootPart")
+                if targetHRP then
+                    c.CFrame = CFrame.new(c.CFrame.Position, targetHRP.Position)
+                end
+            end
+            
+            -- SKIP UpdateCachedAim if gunMacroTarget is active - use cached aim directly
+            if not (ik_executing and gunMacroTarget) then
+                UpdateCachedAim()
+            end
+            
+            -- Wall positioning for Der Hood only
+            if isDerHood and not IsRevolverEquipped() and HasValidWeapon() then
+                if wall and SilentTarget and SilentTarget.Character then
+                    local thrp = SilentTarget.Character:FindFirstChild("HumanoidRootPart")
+                    local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+
+                    if thrp and lhrp then
+                        local distance = (thrp.Position - lhrp.Position).Magnitude
+                        local maxDist = getgenv().Euleon["ExtendedBullet"]["MaxDistance"]
+
+                        -- If gunMacroTarget is active, bypass wall check - position wall regardless
+                        local shouldPositionWall = (gunMacroTarget and gunMacroTarget.Character) or (distance <= maxDist)
+
+                        if shouldPositionWall then
+                            local directionToTarget = (thrp.Position - lhrp.Position).Unit
+                            wall.Position = lhrp.Position + directionToTarget * 20
+                            wall.Size = getWallSize(distance)
+                            wall.CanQuery = true
+
+                            task.spawn(function()
+                                game:GetService("RunService").RenderStepped:Wait()
+                                if wall and wall.Parent then
+                                    wall.CanQuery = false
+                                end
+                            end)
+                        end
+                    end
+                end
+            end
+            
+            local results = {orig_shoot(args)}
+            local isRevolver = IsRevolverEquipped()
+            
+            local distance = 0
+            if SilentTarget and SilentTarget.Character then
+                local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+                local thrp = SilentTarget.Character:FindFirstChild("HumanoidRootPart")
+                if lhrp and thrp then
+                    distance = (thrp.Position - lhrp.Position).Magnitude
+                end
+            end
+            
+            -- If gunMacroTarget is active, ALWAYS redirect to CachedAimPart (ignore all checks)
+            if gunMacroTarget and gunMacroTarget.Character and CachedAimPart and CachedAimPosition then
+                if isRevolver then
+                    local muz = args.ForcedOrigin
+                        or (args.Handle and args.Handle:FindFirstChild("Muzzle") and args.Handle.Muzzle.WorldPosition)
+                        or c.CFrame.Position
+                    
+                    results[1] = CachedAimPosition
+                    results[2] = CachedAimPart
+                    results[3] = (muz - CachedAimPosition).Unit
+                else
+                    -- Non-revolver: redirect to CachedAimPart
+                    results[2] = CachedAimPart
+                end
+            elseif CachedAimPart then
+                if isRevolver and CachedAimPosition and distance <= 263 then
+                    local muz = args.ForcedOrigin
+                        or (args.Handle and args.Handle:FindFirstChild("Muzzle") and args.Handle.Muzzle.WorldPosition)
+                        or c.CFrame.Position
+                    
+                    results[1] = CachedAimPosition
+                    results[2] = CachedAimPart
+                    results[3] = (muz - CachedAimPosition).Unit
+                elseif not isRevolver and distance <= 9999999 then
+                    results[2] = CachedAimPart
+                else
+                end
+            else
+            end
+            
+            -- RESTORE CAMERA after firing
+            if gunMacroTarget and gunMacroTarget.Character then
+                c.CFrame = originalCFrame
+            end
+            
+            -- Hitsound detection - ONLY play on actual shot hits
+            if cfg_hitsound()["Enabled"] and results[2] and CachedAimPart and SilentTarget then
+                local hitPart = results[2]
+                local targetHumanoid = SilentTarget.Character:FindFirstChild("Humanoid")
+                local currentTime = tick()
+                
+                -- Only play sound if we hit the actual target we're aiming at AND cooldown has passed
+                if targetHumanoid and hitPart.Parent == SilentTarget.Character and (currentTime - lastHitsoundTime) > hitsoundCooldown then
+                    lastHitsoundTime = currentTime
+                    local sound = Instance.new("Sound")
+                    sound.SoundId = "rbxassetid://" .. cfg_hitsound()["SoundID"]
+                    sound.Volume = cfg_hitsound()["Volume"]
+                    sound.Parent = c
+                    game:GetService("Debris"):AddItem(sound, 1)
+                    sound:Play()
+                end
+            end
+            
+            return table.unpack(results)
+        end
+        
+        ClientBulletHooked = true
+    end
+    
+    HookClientBullet()
+    
+    getgenv().Euleon_GunHandler = gun_handler
+    getgenv().Euleon_GunHandlerOriginal = orig_shoot
+ 
+    if gun_handler.getAim then
+        local orig_get_aim = gun_handler.getAim
+        gun_handler.getAim = function(p0, p1)
+            local sc = getgenv().Euleon["Silent"]
+            if not sc["Enabled"] or not sc["Main"]["Enabled"] then return orig_get_aim(p0,p1) end
+            
+            -- If gunMacroTarget is active, ALWAYS redirect regardless of FOV/visibility
+            if gunMacroTarget and gunMacroTarget.Character and CachedAimPosition then
+                if not IsRevolverEquipped() then
+                    local dir = CachedAimPosition - p0
+                    return dir.Unit, dir.Magnitude
+                end
+            end
+            
+            if not CachedAimPosition then return orig_get_aim(p0,p1) end
+            
+            if IsRevolverEquipped() then return orig_get_aim(p0,p1) end
+            
+            local dir = CachedAimPosition - p0
+            return dir.Unit, dir.Magnitude
+        end
+    end
+end
+
+local function CreateSilentAimBox()
+    if wall then return end
+
+    wall = Instance.new("Part")
+    wall.Name = "ExtendedBullet"
+    wall.Shape = Enum.PartType.Block
+    wall.Size = getWallSize()
+    wall.Color = Color3.fromRGB(255, 0, 0)
+    wall.Material = Enum.Material.Neon
+    wall.Transparency = 1  -- Always invisible (ShowWall option removed)
+    wall.CanCollide = false
+    wall.CanQuery = false
+    wall.Anchored = true
+    wall.Position = Vector3.new(0, -9999, 0)
+    wall.Parent = workspace
+end
+
+-- Only create wall for Der Hood
+if isDerHood then
+    CreateSilentAimBox()
+end
+
+-- Clear closestPlayerRef when there's no valid cached aim
+table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+    if not CachedAimPosition or not SilentTarget or not SilentTarget.Character then
+        closestPlayerRef = nil
+    end
+end))
+
+-- Wall management - Der Hood only
+if isDerHood then
+    table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(character)
+        if wall and wall.Parent then
+            wall.Position = Vector3.new(0, -9999, 0)
+        end
+
+        -- Reset animation on respawn
+        if currentAnimationTrack then
+            pcall(function() currentAnimationTrack:Stop() end)
+            currentAnimationTrack = nil
+        end
+    end))
+
+    table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+        if wall and wall.Parent then
+            local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+
+            -- Disable wall if no valid weapon, revolver equipped, or no character
+            if IsRevolverEquipped() or not HasValidWeapon() or not lhrp then
+                wall.Position = Vector3.new(0, -9999, 0)
+                wall.CanQuery = false
+                return
+            end
+
+            -- Only reposition wall if we have a valid target and aim position
+            if SilentTarget and SilentTarget.Character and CachedAimPosition then
+                local thrp = SilentTarget.Character:FindFirstChild("HumanoidRootPart")
+                if thrp then
+                    local distance = (thrp.Position - lhrp.Position).Magnitude
+                    local maxDist = getgenv().Euleon["ExtendedBullet"]["MaxDistance"]
+
+                    if distance <= maxDist then
+                        local directionToTarget = (thrp.Position - lhrp.Position).Unit
+                        wall.Position = lhrp.Position + directionToTarget * 20
+                        wall.CanQuery = true
+                    else
+                        wall.Position = Vector3.new(0, -9999, 0)
+                        wall.CanQuery = false
+                    end
+                else
+                    wall.Position = Vector3.new(0, -9999, 0)
+                    wall.CanQuery = false
+                end
+            else
+                -- No valid target, hide wall
+                wall.Position = Vector3.new(0, -9999, 0)
+                wall.CanQuery = false
+            end
+        end
+    end))
+else
+    -- Da Hood: No wall system needed
+    table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(character)
+        -- Reset animation on respawn
+        if currentAnimationTrack then
+            pcall(function() currentAnimationTrack:Stop() end)
+            currentAnimationTrack = nil
+        end
+    end))
+end
+
+if cfg_misc()["HoldShoot"]["Enabled"] then
+    local currentHoldshootTool = nil
+    
+    local function SetupToolTracking(character)
+        if not character then return end
+        
+        table.insert(Euleon_Connections, character.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then
+                currentHoldshootTool = child
+            end
+        end))
+        
+        table.insert(Euleon_Connections, character.ChildRemoved:Connect(function(child)
+            if child:IsA("Tool") and currentHoldshootTool == child then
+                currentHoldshootTool = nil
+            end
+        end))
+    end
+    
+    if lplr.Character then
+        SetupToolTracking(lplr.Character)
+    end
+    
+    table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(character)
+        task.wait(0.1)
+        currentHoldshootTool = nil
+        SetupToolTracking(character)
+    end))
+    
+    table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+        if not holdshoot_active then return end
+        if currentHoldshootTool then
+            pcall(function() currentHoldshootTool:Activate() end)
+        end
+    end))
+    
+    table.insert(Euleon_Connections, uis.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            holdshoot_active = true
+        end
+    end))
+    
+    table.insert(Euleon_Connections, uis.InputEnded:Connect(function(input, gameProcessed)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            holdshoot_active = false
+        end
+    end))
+end
+
+-- Teleport Hold Mode InputEnded
+table.insert(Euleon_Connections, uis.InputEnded:Connect(function(input, gameProcessed)
+    if input.KeyCode == getgenv().Euleon["Movement"]["Teleport"]["Key"] then
+        if teleportHolding and getgenv().Euleon["Movement"]["Teleport"]["HoldMode"] then
+            -- RELEASE hold mode - proper cleanup
+            teleportHolding = false
+            teleportTarget = nil
+            
+            -- Restore your collisions
+            for part, wasEnabled in pairs(holdModeCollisionsDisabled) do
+                if part and part.Parent then
+                    part.CanCollide = wasEnabled
+                end
+            end
+            holdModeCollisionsDisabled = {}
+
+            -- Clear and recreate wall INSTANTLY (Der Hood only)
+            if isDerHood then
+                removeWall()
+                CreateSilentAimBox()
+            end
+        else
+            -- Click mode
+            teleportHolding = false
+            teleportTarget = nil
+        end
+    end
+    
+    -- BypassVoidUsers key release
+    if input.KeyCode == getgenv().Euleon["Movement"]["Teleport"]["BypassVoidUsersKey"] then
+        bypassVoidDesyncActive = false
+        teleportTarget = nil
+        pcall(function() c.CameraSubject = lplr.Character:FindFirstChild("Humanoid") end)
+    end
+end))
+
+if cfg_misc()["NoJumpCooldown"]["Enabled"] and getgenv().Euleon["Movement"]["JumpPower"]["Enabled"] then
+    -- ONLY run NoJumpCooldown if JumpPower is ENABLED
+    -- When JumpPower is enabled, we want to keep UseJumpPower = false to use JumpPower values
+    -- When JumpPower is disabled, game should control jump, so we don't touch UseJumpPower
+    local function apply_no_jump_cooldown()
+        if lplr.Character then
+            local humanoid = lplr.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.UseJumpPower = false
+            end
+        end
+    end
+    
+    local function HookHumanoidForJump(humanoid)
+        if humanoid then
+            humanoid.UseJumpPower = false
+            table.insert(Euleon_Connections, humanoid:GetPropertyChangedSignal("UseJumpPower"):Connect(function()
+                if humanoid.UseJumpPower ~= false then
+                    humanoid.UseJumpPower = false
+                end
+            end))
+        end
+    end
+    
+    apply_no_jump_cooldown()
+    
+    table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(character)
+        task.wait(0.1)
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            HookHumanoidForJump(humanoid)
+        end
+    end))
+end
+
+if cfg_misc()["NoSlowdown"]["Enabled"] then
+    local function IsAliveLocal()
+        if lplr.Character then
+            local humanoid = lplr.Character:FindFirstChildOfClass("Humanoid")
+            return humanoid and humanoid.Health > 0
+        end
+        return false
+    end
+    
+    table.insert(Euleon_Connections, rs.Stepped:Connect(function()
+        if not IsAliveLocal() then return end
+        
+        if lplr.Character then
+            local bodyEffects = lplr.Character:FindFirstChild("BodyEffects")
+            if bodyEffects then
+                local movement = bodyEffects:FindFirstChild("Movement")
+                if movement then
+                    local slowdownEffects = {"NoWalkSpeed", "NoJumping", "ReduceWalk"}
+                    for _, effectName in ipairs(slowdownEffects) do
+                        local effect = movement:FindFirstChild(effectName)
+                        if effect then
+                            pcall(function() effect:Destroy() end)
+                        end
+                    end
+                end
+                
+                local reload = bodyEffects:FindFirstChild("Reload")
+                if reload and reload:IsA("BoolValue") then
+                    if reload.Value == true then
+                        pcall(function() reload.Value = false end)
+                    end
+                end
+            end
+        end
+    end))
+end
+
+if cfg_misc()["TryhardAnimations"]["Enabled"] then
+    local anim_cfg = cfg_misc()["TryhardAnimations"]
+    local lastAnimUpdateTime = 0
+    table.insert(Euleon_Connections, rs.Stepped:Connect(function()
+        local currentTime = tick()
+        if currentTime - lastAnimUpdateTime < 0.2 then return end  -- Only update every 0.2 seconds
+        lastAnimUpdateTime = currentTime
+        
+        if lplr.Character and lplr.Character:FindFirstChild("Animate") then
+            local animate = lplr.Character.Animate
+            if animate:FindFirstChild("run") and animate.run:FindFirstChild("RunAnim") then
+                animate.run.RunAnim.AnimationId = anim_cfg["RunAnimation"]
+            end
+            if animate:FindFirstChild("jump") and animate.jump:FindFirstChild("JumpAnim") then
+                animate.jump.JumpAnim.AnimationId = anim_cfg["JumpAnimation"]
+            end
+            if animate:FindFirstChild("fall") and animate.fall:FindFirstChild("FallAnim") then
+                animate.fall.FallAnim.AnimationId = anim_cfg["FallAnimation"]
+            end
+        end
+    end))
+end
+
+if getgenv().Euleon["Silent"]["FOV"]["ShowFOV"] then
+    local fov_circle = Drawing.new("Circle")
+    fov_circle.Radius = cfg_sfov()["Radius"]
+    fov_circle.Color = cfg_sfov()["Color"]
+    fov_circle.Filled = cfg_sfov()["Filled"]
+    fov_circle.Transparency = cfg_sfov()["Transparency"]
+    fov_circle.Thickness = cfg_sfov()["Thickness"]
+    table.insert(Euleon_Drawings, fov_circle)
+    
+    table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+        local mousePos = uis:GetMouseLocation()
+        fov_circle.Position = mousePos
+        fov_circle.Visible = true
+    end))
+end
+
+-- ForceResetOnKO: Auto-reset player when they K.O (using IsAlive check)
+-- ONLY SETUP IF ENABLED - PIGGYBACKED ON UPDATECACHEDAIM LOOP
+local forceResetLastAlive = true
+if cfg_misc()["ForceResetOnKO"]["Enabled"] == true then
+    forceResetLastAlive = IsAlive(lplr)
+end
+
+table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+    UpdateCachedAim()
+    
+    -- CRITICAL: Update CachedAimPart every frame when gunMacroTarget is active
+    if gunMacroTarget and gunMacroTarget.Character and ik_executing then
+        local targetPartName = "Head"
+        if shots_fired >= 1 then
+            targetPartName = "UpperTorso"
+        end
+        local targetPart = gunMacroTarget.Character:FindFirstChild(targetPartName)
+        if targetPart then
+            CachedAimPart = targetPart
+        end
+        
+        -- FORCE LOCK SilentTarget and closestPlayerRef to gunMacroTarget
+        SilentTarget = gunMacroTarget
+        closestPlayerRef = gunMacroTarget
+    end
+    
+    -- ForceResetOnKO check (piggybacks on this loop to save FPS)
+    if cfg_misc()["ForceResetOnKO"]["Enabled"] == true then
+        if not lplr or not lplr.Character then
+            forceResetLastAlive = true
+            return
+        end
+        
+        local currentlyAlive = IsAlive(lplr)
+        
+        -- Detect K.O: was alive, now not alive
+        if forceResetLastAlive and not currentlyAlive then
+            -- Wait 0.5 seconds before resetting
+            task.wait(0.5)
+
+            -- Check if still K.O'd after delay
+            if not IsAlive(lplr) and lplr.Character then
+                pcall(function()
+                    local humanoid = lplr.Character:FindFirstChildOfClass("Humanoid")
+                    if humanoid then
+                        humanoid.Health = 0
+                    end
+                end)
+            end
+        end
+        
+        forceResetLastAlive = currentlyAlive
+    end
+end))
+table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+    if not camlockActive or not getgenv().Euleon["Camlock"]["Enabled"] then return end
+    
+    local cam_cfg = cfg_camlock()
+    if not cam_cfg then return end
+    
+    local checks_cfg = cfg_checks()
+    
+    -- Check if current target is still valid
+    if camlockTarget and camlockTarget.Character then
+        local humanoid = camlockTarget.Character:FindFirstChildOfClass("Humanoid")
+        
+        -- Drop target if dead
+        if not humanoid or humanoid.Health <= 0 then
+            camlockTarget = nil
+            return
+        end
+        
+        -- Drop target if K.O Check enabled and target is K.O'd
+        if checks_cfg and checks_cfg["K.OCheck"] then
+            if not IsAlive(camlockTarget) then
+                camlockTarget = nil
+                return
+            end
+        end
+        
+        -- Drop target if VisibleCheck enabled and target is hidden
+        if checks_cfg and checks_cfg["VisibleCheck"] then
+            local be = camlockTarget.Character:FindFirstChild("BodyEffects")
+            if be then
+                if be:FindFirstChild("K.O") and be["K.O"].Value == true then
+                    camlockTarget = nil
+                    return
+                end
+                if be:FindFirstChild("Dead") and be["Dead"].Value == true then
+                    camlockTarget = nil
+                    return
+                end
+            end
+        end
+        
+        -- Apply camlock to current target ONLY (not closest to cursor)
+        local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+        if not lhrp then return end
+        
+        local thrp = camlockTarget.Character:FindFirstChild("HumanoidRootPart")
+        if not thrp then return end
+        
+        -- WallCheck: Only check if we should apply camlock, but DON'T drop target
+        -- This allows targeting behind wall and re-locking when they come out
+        local canApplyCamlock = true
+        if checks_cfg and checks_cfg["WallCheck"] then
+            if not CamlockWallCheck(camlockTarget) then
+                -- Behind wall - don't apply camlock this frame, but keep target
+                canApplyCamlock = false
+            end
+        end
+        
+        -- Only apply camlock if all checks pass
+        if canApplyCamlock then
+            local distance = (thrp.Position - lhrp.Position).Magnitude
+            local targetPos = GetCamlockPosition(camlockTarget.Character, distance)
+            
+            if targetPos then
+                local smoothness = cam_cfg["Smoothness"] or 0.15
+                local mode = cam_cfg["Mode"] or "Camera"
+                
+                if mode == "Camera" then
+                    local newCFrame = CFrame.lookAt(c.CFrame.p, targetPos)
+                    c.CFrame = c.CFrame:Lerp(newCFrame, smoothness)
+                elseif mode == "Mouse" then
+                    local screen, onScreen = c:WorldToViewportPoint(targetPos)
+                    if onScreen and screen.Z > 0 then
+                        local mousePos = uis:GetMouseLocation()
+                        local diffX = screen.X - mousePos.X
+                        local diffY = screen.Y - mousePos.Y
+                        
+                        local mouseSmoothness = smoothness * 5
+                        mouseSmoothness = math.min(mouseSmoothness, 1)
+                        
+                        if math.abs(diffX) > 0.5 or math.abs(diffY) > 0.5 then
+                            local moveX = diffX * mouseSmoothness
+                            local moveY = diffY * mouseSmoothness
+                            mousemoverel(moveX, moveY)
+                        end
+                    end
+                end
+            end
+        end
+        -- If behind wall, just maintain camera position (no lerp, no snap)
+    else
+        -- No target, don't do anything
+        return
+    end
+end))
+
+-- Camlock FOV Circle
+if cfg_camlock()["ShowFOV"] then
+    local camlock_fov_circle = Drawing.new("Circle")
+    camlock_fov_circle.Radius = cfg_camlock()["Radius"]
+    camlock_fov_circle.Color = Color3.fromRGB(100, 200, 200)  -- Light cyan
+    camlock_fov_circle.Filled = cfg_camlock()["Filled"]
+    camlock_fov_circle.Transparency = cfg_camlock()["Filled"] and 0.7 or 0.5
+    camlock_fov_circle.Thickness = 2
+    table.insert(Euleon_Drawings, camlock_fov_circle)
+    
+    table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+        local mousePos = uis:GetMouseLocation()
+        camlock_fov_circle.Position = mousePos
+        camlock_fov_circle.Visible = true
+    end))
+end
+
+
+
+if cfg_esp()["Enabled"] then
+    local ESP_Players = {}
+    local ESP_ShowGUI = false
+    local ESP_GUI = nil
+    local ESP_GUIVisible = false
+    
+    local function CreatePlayerESP(player)
+        if not player or player == lplr then return end
+        
+        if ESP_Players[player] then return end
+        
+        local displayName = player.DisplayName or player.Name
+        
+        ESP_Players[player] = {
+            DisplayName = displayName,
+            Box = Drawing.new("Square", {Visible = false, Filled = false, ZIndex = 999, Thickness = 1, Transparency = 1}),
+            BoxOutline = Drawing.new("Square", {Visible = false, Filled = false, ZIndex = 1, Color = Color3.fromRGB(0,0,0), Thickness = 2, Transparency = 1}),
+            Name = Drawing.new("Text", {Visible = false, Size = 13, Center = true, Outline = true, Font = Drawing.Fonts.Plex, Color = Color3.fromRGB(255,255,255), Transparency = 1}),
+        }
+        
+        table.insert(Euleon_Drawings, ESP_Players[player].Box)
+        table.insert(Euleon_Drawings, ESP_Players[player].BoxOutline)
+        table.insert(Euleon_Drawings, ESP_Players[player].Name)
+    end
+    
+    local function CreateFilterGUI()
+        if ESP_GUI then pcall(function() ESP_GUI:Destroy() end) end
+        
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "EspPlus_FilterGUI"
+        screenGui.ResetOnSpawn = false
+        screenGui.Parent = game:GetService("CoreGui")
+        
+        local mainFrame = Instance.new("Frame")
+        mainFrame.Name = "MainFrame"
+        mainFrame.Size = UDim2.new(0, 420, 0, 500)
+        mainFrame.Position = UDim2.new(0, 10, 0, 50)
+        mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        mainFrame.BorderColor3 = Color3.fromRGB(15, 15, 15)
+        mainFrame.BorderSizePixel = 0
+        mainFrame.Parent = screenGui
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 8)
+        corner.Parent = mainFrame
+        
+        local buttonsContainer = Instance.new("Frame")
+        buttonsContainer.Name = "ButtonsContainer"
+        buttonsContainer.Size = UDim2.new(1, 0, 0, 60)
+        buttonsContainer.BackgroundTransparency = 1
+        buttonsContainer.Parent = mainFrame
+        
+        local function CreateButton(name, text, position, callback)
+            local button = Instance.new("TextButton")
+            button.Name = name
+            button.Text = text
+            button.Size = UDim2.new(0.48, 0, 0, 25)
+            button.Position = position
+            button.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+            button.BackgroundTransparency = 0.3
+            button.BorderSizePixel = 0
+            button.TextColor3 = Color3.fromRGB(200, 200, 200)
+            button.TextSize = 12
+            button.Font = Enum.Font.GothamBold
+            button.Parent = buttonsContainer
+            
+            local btnCorner = Instance.new("UICorner")
+            btnCorner.CornerRadius = UDim.new(0, 4)
+            btnCorner.Parent = button
+            
+            button.MouseButton1Click:Connect(callback)
+            return button
+        end
+        
+        CreateButton("RefreshButton", "Refresh", UDim2.new(0.02, 0, 0, 5), function()
+            RefreshPlayerList()
+        end)
+        
+        CreateButton("ServerButton", "ESP all", UDim2.new(0.52, 0, 0, 5), function()
+            for _, player in pairs(plrs:GetPlayers()) do
+                if player ~= lplr then
+                    local found = false
+                    for _, name in ipairs(_G.ESPFilteredPlayers) do
+                        if name == player.Name then
+                            found = true
+                            break
+                        end
+                    end
+                    if not found then
+                        table.insert(_G.ESPFilteredPlayers, player.Name)
+                    end
+                end
+            end
+            RefreshPlayerList()
+        end)
+        
+        local targetESPedBtn = CreateButton("TargetESPedButton", "  Target ESPed", UDim2.new(0.02, 0, 0, 35))
+        targetESPedBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+        targetESPedBtn.Size = UDim2.new(0.96, 0, 0, 25)
+        
+        targetESPedBtn.MouseButton1Click:Connect(function()
+            _G.TargetESPedPlayersMode = not _G.TargetESPedPlayersMode
+        end)
+        
+        local resetButton = Instance.new("TextButton")
+        resetButton.Name = "ResetButton"
+        resetButton.Text = "Reset Filter"
+        resetButton.Size = UDim2.new(1, -20, 0, 25)
+        resetButton.Position = UDim2.new(0, 10, 1, -35)
+        resetButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+        resetButton.BorderSizePixel = 0
+        resetButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+        resetButton.TextSize = 12
+        resetButton.Font = Enum.Font.GothamBold
+        resetButton.Parent = mainFrame
+        
+        local resetCorner = Instance.new("UICorner")
+        resetCorner.CornerRadius = UDim.new(0, 4)
+        resetCorner.Parent = resetButton
+        
+        resetButton.MouseButton1Click:Connect(function()
+            _G.ESPFilteredPlayers = {}
+            RefreshPlayerList()
+        end)
+        
+        local scrollFrame = Instance.new("ScrollingFrame")
+        scrollFrame.Name = "ScrollFrame"
+        scrollFrame.Size = UDim2.new(1, -20, 1, -125)
+        scrollFrame.Position = UDim2.new(0, 10, 0, 70)
+        scrollFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+        scrollFrame.BorderSizePixel = 0
+        scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+        scrollFrame.ScrollBarThickness = 8
+        scrollFrame.Parent = mainFrame
+        
+        local scrollCorner = Instance.new("UICorner")
+        scrollCorner.CornerRadius = UDim.new(0, 4)
+        scrollCorner.Parent = scrollFrame
+        
+        local function RefreshPlayerList()
+            for _, child in ipairs(scrollFrame:GetChildren()) do
+                pcall(function() child:Destroy() end)
+            end
+            
+            local yPosition = 0
+            
+            for _, player in pairs(plrs:GetPlayers()) do
+                if player == lplr then continue end
+                if not player.Character then continue end
+                
+                local isFiltered = false
+                for _, filteredName in pairs(_G.ESPFilteredPlayers) do
+                    if player.Name == filteredName then
+                        isFiltered = true
+                        break
+                    end
+                end
+                
+                local isWhitelisted = false
+                for _, whitelistedName in pairs(_G.ESPWhitelistedPlayers) do
+                    if player.Name == whitelistedName then
+                        isWhitelisted = true
+                        break
+                    end
+                end
+                
+                local playerBtn = Instance.new("TextButton")
+                playerBtn.Name = "PlayerButton_" .. player.Name
+                playerBtn.Text = (isFiltered and "✓ " or "  ") .. player.DisplayName
+                playerBtn.Size = UDim2.new(1, -45, 0, 25)
+                playerBtn.Position = UDim2.new(0, 0, 0, yPosition)
+                playerBtn.BackgroundColor3 = isFiltered and Color3.fromRGB(60, 100, 60) or Color3.fromRGB(40, 40, 40)
+                playerBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+                playerBtn.TextSize = 12
+                playerBtn.Font = Enum.Font.Gotham
+                playerBtn.BorderSizePixel = 0
+                playerBtn.Parent = scrollFrame
+                
+                playerBtn.MouseButton1Click:Connect(function()
+                    local found = false
+                    for i, name in ipairs(_G.ESPFilteredPlayers) do
+                        if name == player.Name then
+                            table.remove(_G.ESPFilteredPlayers, i)
+                            found = true
+                            break
+                        end
+                    end
+                    
+                    if not found then
+                        table.insert(_G.ESPFilteredPlayers, player.Name)
+                    end
+                    
+                    RefreshPlayerList()
+                end)
+                
+                local whitelistBtn = Instance.new("TextButton")
+                whitelistBtn.Name = "WhitelistButton_" .. player.Name
+                whitelistBtn.Text = isWhitelisted and "✓" or "W"
+                whitelistBtn.Size = UDim2.new(0, 40, 0, 25)
+                whitelistBtn.Position = UDim2.new(1, -40, 0, yPosition)
+                whitelistBtn.BackgroundColor3 = isWhitelisted and Color3.fromRGB(80, 120, 80) or Color3.fromRGB(100, 80, 80)
+                whitelistBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+                whitelistBtn.TextSize = 12
+                whitelistBtn.Font = Enum.Font.GothamBold
+                whitelistBtn.BorderSizePixel = 0
+                whitelistBtn.Parent = scrollFrame
+                
+                whitelistBtn.MouseButton1Click:Connect(function()
+                    local found = false
+                    for i, name in ipairs(_G.ESPWhitelistedPlayers) do
+                        if name == player.Name then
+                            table.remove(_G.ESPWhitelistedPlayers, i)
+                            found = true
+                            break
+                        end
+                    end
+                    
+                    if not found then
+                        table.insert(_G.ESPWhitelistedPlayers, player.Name)
+                    end
+                    
+                    RefreshPlayerList()
+                end)
+                
+                yPosition = yPosition + 25
+            end
+            
+            scrollFrame.CanvasSize = UDim2.new(1, 0, 0, math.max(yPosition, 1))
+        end
+        
+        RefreshPlayerList()
+        
+        local lastRefreshTime = 0
+        
+        table.insert(Euleon_Connections, game:GetService("RunService").Heartbeat:Connect(function()
+            if ESP_GUIVisible and scrollFrame and scrollFrame.Parent then
+                pcall(function()
+                    local targetBtn = mainFrame:FindFirstChild("TargetESPedButton")
+                    if targetBtn then
+                        local isEnabled = _G.TargetESPedPlayersMode and #_G.ESPFilteredPlayers > 0
+                        if isEnabled then
+                            targetBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+                            targetBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+                        else
+                            targetBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+                            targetBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+                        end
+                        targetBtn.Text = isEnabled and ("✓ Target ESPed") or ("  Target ESPed")
+                    end
+                end)
+                
+                local currentTime = tick()
+                if currentTime - lastRefreshTime >= 2 then
+                    lastRefreshTime = currentTime
+                    pcall(function()
+                        RefreshPlayerList()
+                    end)
+                end
+            end
+        end))
+        
+        return screenGui
+    end
+    
+    table.insert(Euleon_Connections, uis.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.KeyCode == cfg_esp()["ToggleKey"] then
+            ESP_ShowGUI = not ESP_ShowGUI
+            if ESP_ShowGUI then
+                if not ESP_GUI then
+                    ESP_GUI = CreateFilterGUI()
+                end
+                ESP_GUI.Enabled = true
+                ESP_GUIVisible = true
+                
+                -- Fade in animation - fade all elements
+                local mainFrame = ESP_GUI:FindFirstChild("MainFrame")
+                if mainFrame then
+                    mainFrame.BackgroundTransparency = 1
+                    for _, child in ipairs(mainFrame:GetDescendants()) do
+                        if child:IsA("TextButton") or child:IsA("TextLabel") or child:IsA("ScrollingFrame") then
+                            child.BackgroundTransparency = 1
+                            if child:IsA("TextButton") or child:IsA("TextLabel") then
+                                child.TextTransparency = 1
+                            end
+                        end
+                    end
+                    
+                    -- Fade in
+                    for i = 1, 20 do
+                        if mainFrame.Parent then
+                            mainFrame.BackgroundTransparency = 1 - (i / 20)
+                            for _, child in ipairs(mainFrame:GetDescendants()) do
+                                if child:IsA("TextButton") or child:IsA("TextLabel") or child:IsA("ScrollingFrame") then
+                                    child.BackgroundTransparency = 1 - (i / 20)
+                                    if child:IsA("TextButton") or child:IsA("TextLabel") then
+                                        child.TextTransparency = 1 - (i / 20)
+                                    end
+                                end
+                            end
+                        end
+                        task.wait(1 / 60)
+                    end
+                end
+            else
+                if ESP_GUI then
+                    local mainFrame = ESP_GUI:FindFirstChild("MainFrame")
+                    if mainFrame then
+                        for i = 1, 20 do
+                            if mainFrame.Parent then
+                                mainFrame.BackgroundTransparency = i / 20
+                                for _, child in ipairs(mainFrame:GetDescendants()) do
+                                    if child:IsA("TextButton") or child:IsA("TextLabel") or child:IsA("ScrollingFrame") then
+                                        child.BackgroundTransparency = i / 20
+                                        if child:IsA("TextButton") or child:IsA("TextLabel") then
+                                            child.TextTransparency = i / 20
+                                        end
+                                    end
+                                end
+                            end
+                            task.wait(1 / 60)
+                        end
+                    end
+                    ESP_GUI.Enabled = false
+                end
+                ESP_GUIVisible = false
+            end
+        end
+    end))
+    
+    for _, player in pairs(plrs:GetPlayers()) do
+        if player ~= lplr then
+            CreatePlayerESP(player)
+        end
+    end
+    
+    table.insert(Euleon_Connections, plrs.PlayerAdded:Connect(function(player)
+        CreatePlayerESP(player)
+    end))
+    
+    table.insert(Euleon_Connections, plrs.PlayerRemoving:Connect(function(player)
+        if ESP_Players[player] then
+            for _, draw in pairs(ESP_Players[player]) do
+                pcall(function() draw:Remove() end)
+            end
+            ESP_Players[player] = nil
+        end
+    end))
+    
+    local esp_throttle = 0
+    table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+        esp_throttle = (esp_throttle + 1) % 4
+        if esp_throttle ~= 0 then return end
+        
+        for player, drawingInstances in pairs(ESP_Players) do
+            if not player or not player.Character then continue end
+            
+            local shouldDraw = false
+            for _, filteredName in pairs(_G.ESPFilteredPlayers) do
+                if player.Name == filteredName then
+                    shouldDraw = true
+                    break
+                end
+            end
+            
+            if shouldDraw then
+                local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local distance = (hrp.Position - lplr.Character:FindFirstChild("HumanoidRootPart").Position).Magnitude
+                    local maxDistance = cfg_esp()["NoLimit"] and math.huge or cfg_esp()["RenderDistance"]
+                    if distance <= maxDistance then
+                        local screenPos = c:WorldToViewportPoint(hrp.Position)
+                        if screenPos.Z > 0 then 
+                            local charSize = (c:WorldToViewportPoint(hrp.Position - Vector3.new(0, 3, 0)).Y - c:WorldToViewportPoint(hrp.Position + Vector3.new(0, 2.6, 0)).Y) / 2
+                            local boxSize = Vector2.new(math.floor(charSize * 1.1), math.floor(charSize * 1.9))
+                            local boxPosition = Vector2.new(math.floor(screenPos.X - charSize * 1.1 / 2), math.floor(screenPos.Y - charSize * 1.6 / 2))
+                            
+                            local espColor = cfg_esp()["Color"]
+                            
+                            if cfg_esp()["ShowBoxes"] then
+                                drawingInstances.Box.Size = boxSize
+                                drawingInstances.Box.Position = boxPosition
+                                drawingInstances.Box.Visible = true
+                                drawingInstances.Box.Color = espColor
+                                drawingInstances.Box.Transparency = cfg_esp()["Transparency"]
+                                
+                                drawingInstances.BoxOutline.Size = boxSize
+                                drawingInstances.BoxOutline.Position = boxPosition
+                                drawingInstances.BoxOutline.Visible = true
+                                drawingInstances.BoxOutline.Transparency = cfg_esp()["Transparency"]
+                            else
+                                drawingInstances.Box.Visible = false
+                                drawingInstances.BoxOutline.Visible = false
+                            end
+                            
+                            if cfg_esp()["ShowNames"] then
+                                drawingInstances.Name.Visible = true
+                                drawingInstances.Name.Text = drawingInstances.DisplayName
+                                drawingInstances.Name.Position = Vector2.new(boxSize.X / 2 + boxPosition.X, boxPosition.Y - 16)
+                                drawingInstances.Name.Color = espColor
+                                drawingInstances.Name.Transparency = cfg_esp()["Transparency"]
+                            else
+                                drawingInstances.Name.Visible = false
+                            end
+                        else
+                            for _, draw in pairs(drawingInstances) do
+                                pcall(function() draw.Visible = false end)
+                            end
+                        end
+                    else
+                        for _, draw in pairs(drawingInstances) do
+                            pcall(function() draw.Visible = false end)
+                        end
+                    end
+                else
+                    for _, draw in pairs(drawingInstances) do
+                        pcall(function() draw.Visible = false end)
+                    end
+                end
+            else
+                for _, draw in pairs(drawingInstances) do
+                    pcall(function() draw.Visible = false end)
+                end
+            end
+        end
+    end))
+end
+
+if cfg_misc()["TryhardAnimations"]["Enabled"] then
+    local lastCharacter = nil
+    local animCounter = 0
+    
+    local function ApplyAnimations(character)
+        if character and character:FindFirstChild("Animate") then
+            task.wait(0.1)  -- Wait for animations to load
+            local anim = character.Animate
+            pcall(function()
+                anim.run.RunAnim.AnimationId = cfg_misc()["TryhardAnimations"]["RunAnimation"]
+                anim.jump.JumpAnim.AnimationId = cfg_misc()["TryhardAnimations"]["JumpAnimation"]
+                anim.fall.FallAnim.AnimationId = cfg_misc()["TryhardAnimations"]["FallAnimation"]
+            end)
+        end
+    end
+    
+    if lplr.Character then
+        ApplyAnimations(lplr.Character)
+    end
+    
+    table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(character)
+        ApplyAnimations(character)
+    end))
+end
+
+if cfg_misc()["GunMacro"]["Enabled"] then
+    local ik_cooldown = 0
+    local gun_sequence = {"[Double-Barrel SG]", "[TacticalShotgun]", "[Double-Barrel SG]", "[TacticalShotgun]"}
+    local gun_index = 1
+    local last_shot_time = 0
+    local shots_fired = 0
+    local ik_executing = false
+    local ik_holding = false  -- For Hold mode
+    
+    table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(char)
+        task.wait(0.1)
+        ik_cooldown = 0
+        ik_executing = false
+        ik_holding = false
+        gun_index = 1
+        last_shot_time = 0
+        shots_fired = 0
+        SilentTarget = nil
+        CachedAimPart = nil
+        CachedAimPosition = nil
+    end))
+    
+    -- Check if player is ESPed
+    local function IsPlayerESPed(player)
+        if not cfg_misc()["GunMacro"]["OnlyESPED"] then return true end
+        for _, espName in ipairs(_G.ESPFilteredPlayers) do
+            if plrs:FindFirstChild(espName) == player then
+                return true
+            end
+        end
+        return false
+    end
+    
+    table.insert(Euleon_Connections, uis.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.UserInputType == Enum.UserInputType.MouseButton3 then
+            if cfg_misc()["GunMacro"]["Mode"] == "Hold" then
+                -- Hold mode: just activate listening, don't validate yet
+                ik_holding = true
+            else  -- Click mode
+                if ik_executing or ik_cooldown > 0 then return end
+                
+                local noVisibleLimits = cfg_misc()["GunMacro"]["NoVisibleLimits"]
+                
+                -- If NoVisibleLimits, find target by distance only
+                if noVisibleLimits then
+                    local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+                    if not lhrp then return end
+                    
+                    local closeRange = cfg_misc()["GunMacro"]["Range"]
+                    local bestTarget = nil
+                    local bestDist = closeRange
+                    
+                    -- Find closest ESPed player in range (if OnlyESPED)
+                    if cfg_misc()["GunMacro"]["OnlyESPED"] then
+                        for _, espName in ipairs(_G.ESPFilteredPlayers) do
+                            local player = plrs:FindFirstChild(espName)
+                            if not player or not player.Character then continue end
+                            
+                            local thrp = player.Character:FindFirstChild("HumanoidRootPart")
+                            if not thrp then continue end
+                            
+                            -- Check if alive (proper K.O check using IsAlive)
+                            if not IsAlive(player) then continue end
+                            
+                            -- Check wallcheck if enabled
+                            if getgenv().Euleon["Checks"]["WallCheck"] then
+                                if not CamlockWallCheck(player) then continue end
+                            end
+                            
+                            local dist = (thrp.Position - lhrp.Position).Magnitude
+                            if dist < bestDist then
+                                bestDist = dist
+                                bestTarget = player
+                            end
+                        end
+                    else
+                        -- Find closest any player in range
+                        for _, player in ipairs(plrs:GetPlayers()) do
+                            if player == lplr or not player.Character then continue end
+                            
+                            local thrp = player.Character:FindFirstChild("HumanoidRootPart")
+                            if not thrp then continue end
+                            
+                            -- Check if alive (proper K.O check using IsAlive)
+                            if not IsAlive(player) then continue end
+                            
+                            -- Check wallcheck if enabled
+                            if getgenv().Euleon["Checks"]["WallCheck"] then
+                                if not CamlockWallCheck(player) then continue end
+                            end
+                            
+                            local dist = (thrp.Position - lhrp.Position).Magnitude
+                            if dist < bestDist then
+                                bestDist = dist
+                                bestTarget = player
+                            end
+                        end
+                    end
+                    
+                    if not bestTarget then return end
+                    
+                    -- Update aim part for this target
+                    local targetPartName = "Head"
+                    if shots_fired >= 1 then
+                        targetPartName = "UpperTorso"
+                    end
+                    local targetPart = bestTarget.Character:FindFirstChild(targetPartName)
+                    if targetPart then
+                        CachedAimPart = targetPart
+                    end
+                    
+                    SilentTarget = bestTarget
+                    gunMacroTarget = bestTarget
+                    ik_executing = true
+                    gun_index = 1
+                    last_shot_time = 0
+                    shots_fired = 0
+                    
+                    local backpack = lplr:FindFirstChild("Backpack")
+                    local character = lplr.Character
+                    if backpack and character then
+                        local currentTool = character:FindFirstChildOfClass("Tool")
+                        if currentTool then
+                            pcall(function() currentTool.Parent = backpack end)
+                        end
+                    end
+                    return
+                end
+                
+                -- Normal mode with FOV/visibility checks
+                UpdateCachedAim()
+                
+                if not SilentTarget or not SilentTarget.Character then return end
+                
+                -- OnlyESPED: Always check if enabled
+                if cfg_misc()["GunMacro"]["OnlyESPED"] then
+                    if not IsPlayerESPed(SilentTarget) then return end
+                end
+                
+                -- K.O Check: Always check humanoid health
+                local targetHum = SilentTarget.Character:FindFirstChildOfClass("Humanoid")
+                if not targetHum or targetHum.Health <= 0 then return end
+                if targetHum:GetState() == Enum.HumanoidStateType.Dead then return end
+                
+                local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+                local thrp = SilentTarget.Character:FindFirstChild("HumanoidRootPart")
+                if not lhrp or not thrp then return end
+                
+                local distance = (thrp.Position - lhrp.Position).Magnitude
+                local closeRange = cfg_misc()["GunMacro"]["Range"]
+                if distance > closeRange and not IsRevolverEquipped() then
+                    return
+                end
+                
+                -- FOV Check
+                local fov_config = getgenv().Euleon["Silent"]["FOV"]
+                local fov_radius = fov_config["Radius"]
+                local screen_pos = c:WorldToViewportPoint(thrp.Position)
+                local mouse_pos = uis:GetMouseLocation()
+                local dist_to_mouse = (Vector2.new(screen_pos.X, screen_pos.Y) - mouse_pos).Magnitude
+                
+                if dist_to_mouse > fov_radius then return end
+                
+                ik_executing = true
+                gunMacroTarget = SilentTarget  -- Lock silent aim to gun macro target
+                gun_index = 1
+                last_shot_time = 0
+                shots_fired = 0
+                
+                local backpack = lplr:FindFirstChild("Backpack")
+                local character = lplr.Character
+                if backpack and character then
+                    local currentTool = character:FindFirstChildOfClass("Tool")
+                    if currentTool then
+                        pcall(function() currentTool.Parent = backpack end)
+                    end
+                end
+            end
+        end
+    end))
+    
+    table.insert(Euleon_Connections, uis.InputEnded:Connect(function(input, gameProcessed)
+        if input.UserInputType == Enum.UserInputType.MouseButton3 then
+            if cfg_misc()["GunMacro"]["Mode"] == "Hold" then
+                ik_holding = false
+                ik_executing = false
+                gunMacroTarget = nil  -- Clear gun macro target to restore normal silent aim
+                SilentTarget = nil    -- Reset silent target
+                CachedAimPart = nil
+                CachedAimPosition = nil
+            end
+        end
+    end))
+    
+    table.insert(Euleon_Connections, rs.Heartbeat:Connect(function()
+        if ik_cooldown > 0 then
+            ik_cooldown = ik_cooldown - 1
+        end
+        
+        if last_shot_time > 0 then
+            last_shot_time = last_shot_time + 1
+            if last_shot_time > 15 and cfg_misc()["GunMacro"]["PutAwayAfterShot"] then
+                local backpack = lplr:FindFirstChild("Backpack")
+                if backpack and lplr.Character then
+                    local db = lplr.Character:FindFirstChild("[Double-Barrel SG]")
+                    local tac = lplr.Character:FindFirstChild("[TacticalShotgun]")
+                    local knife = lplr.Character:FindFirstChild("[Knife]")
+                    if db then pcall(function() db.Parent = backpack end) end
+                    if tac then pcall(function() tac.Parent = backpack end) end
+                    if knife then pcall(function() knife.Parent = backpack end) end
+                end
+                last_shot_time = 0
+                ik_executing = false
+            end
+        end
+        
+        -- Handle Hold mode - continuous auto-shoot when in range (OPTIMIZED)
+        if cfg_misc()["GunMacro"]["Mode"] == "Hold" and (ik_holding or ik_executing) then
+            
+            -- CRITICAL: Check if current target is alive (K.O check)
+            if gunMacroTarget and gunMacroTarget.Character then
+                local targetHum = gunMacroTarget.Character:FindFirstChildOfClass("Humanoid")
+                if not targetHum or targetHum.Health <= 0 then
+                    ik_executing = false
+                    gunMacroTarget = nil
+                    return
+                end
+                if targetHum:GetState() == Enum.HumanoidStateType.Dead then
+                    ik_executing = false
+                    gunMacroTarget = nil
+                    return
+                end
+                
+                -- Check BodyEffects for K.O and Dead states (extra safety)
+                local bodyEffects = gunMacroTarget.Character:FindFirstChild("BodyEffects")
+                if bodyEffects then
+                    local koValue = bodyEffects:FindFirstChild("K.O")
+                    local deadValue = bodyEffects:FindFirstChild("Dead")
+                    if (koValue and koValue.Value) or (deadValue and deadValue.Value) then
+                        ik_executing = false
+                        gunMacroTarget = nil
+                        return
+                    end
+                end
+            end
+            
+            local noVisibleLimits = cfg_misc()["GunMacro"]["NoVisibleLimits"]
+            
+            -- If NoVisibleLimits, find closest ESPed player by distance every frame (like AutoShoot)
+            if noVisibleLimits then
+                if not lplr.Character then 
+                    ik_executing = false
+                    return 
+                end
+                
+                local lhrp = lplr.Character:FindFirstChild("HumanoidRootPart")
+                if not lhrp then 
+                    ik_executing = false
+                    return 
+                end
+                
+                local closeRange = cfg_misc()["GunMacro"]["Range"]
+                local bestTarget = nil
+                local bestDist = closeRange
+                
+                -- Loop through ESPed players and find closest in range
+                for _, espName in ipairs(_G.ESPFilteredPlayers) do
+                    local player = plrs:FindFirstChild(espName)
+                    if not player or not player.Character then continue end
+                    
+                    local thrp = player.Character:FindFirstChild("HumanoidRootPart")
+                    if not thrp then continue end
+                    
+                    -- Check if alive using IsAlive function (proper K.O check)
+                    if not IsAlive(player) then continue end
+                    
+                    -- Check wallcheck if enabled
+                    if getgenv().Euleon["Checks"]["WallCheck"] then
+                        if not CamlockWallCheck(player) then continue end
+                    end
+                    
+                    -- Find closest ESPed player by distance
+                    local distance = (thrp.Position - lhrp.Position).Magnitude
+                    if distance <= bestDist then
+                        bestDist = distance
+                        bestTarget = player
+                    end
+                end
+                
+                if bestTarget and bestTarget.Character then
+                    SilentTarget = bestTarget
+                    gunMacroTarget = bestTarget
+                    
+                    -- Update aim part for this target
+                    local targetPartName = "Head"
+                    if shots_fired >= 1 then
+                        targetPartName = "UpperTorso"
+                    end
+                    local targetPart = bestTarget.Character:FindFirstChild(targetPartName)
+                    if targetPart then
+                        CachedAimPart = targetPart
+                    end
+                    
+                    if not ik_executing then
+                        ik_executing = true
+                        gun_index = 1
+                        last_shot_time = 0
+                        shots_fired = 0
+                        
+                        local backpack = lplr:FindFirstChild("Backpack")
+                        local character = lplr.Character
+                        if backpack and character then
+                            local currentTool = character:FindFirstChildOfClass("Tool")
+                            if currentTool then
+                                pcall(function() currentTool.Parent = backpack end)
+                            end
+                        end
+                    end
+                else
+                    -- Only set to false if we were previously executing (lost target)
+                    if ik_executing then
+                        ik_executing = false
+                    end
+                end
+                -- DON'T RETURN - let gun pulling code run below
+            else
+                -- Normal Hold mode (with FOV checks)
+                if ik_holding then
+                    UpdateCachedAim()
+                end
+                
+                if not lplr.Character then 
+                    ik_executing = false
+                    return 
+                end
+                
+                if not SilentTarget or not SilentTarget.Character then 
+                    ik_executing = false
+                    return 
+                end
+                
+                -- Check if SilentTarget is still alive (K.O check)
+                local targetHum = SilentTarget.Character:FindFirstChildOfClass("Humanoid")
+                if not targetHum or targetHum.Health <= 0 then
+                    ik_executing = false
+                    return
+                end
+                if targetHum:GetState() == Enum.HumanoidStateType.Dead then
+                    ik_executing = false
+                    return
+                end
+                
+                -- Check BodyEffects for K.O and Dead states (extra safety)
+                local bodyEffects = SilentTarget.Character:FindFirstChild("BodyEffects")
+                if bodyEffects then
+                    local koValue = bodyEffects:FindFirstChild("K.O")
+                    local deadValue = bodyEffects:FindFirstChild("Dead")
+                    if (koValue and koValue.Value) or (deadValue and deadValue.Value) then
+                        ik_executing = false
+                        return
+                    end
+                end
+                
+                local lhrp = lplr.Character:FindFirstChild("HumanoidRootPart")
+                local thrp = SilentTarget.Character:FindFirstChild("HumanoidRootPart")
+                if not lhrp or not thrp then 
+                    ik_executing = false
+                    return 
+                end
+                
+                local distance = (thrp.Position - lhrp.Position).Magnitude
+                local closeRange = cfg_misc()["GunMacro"]["Range"]
+                
+                if distance > closeRange and not IsRevolverEquipped() then
+                    if ik_executing then
+                        ik_executing = false
+                        gun_index = 1
+                        last_shot_time = 0
+                        shots_fired = 0
+                    end
+                    return
+                end
+                
+                -- OnlyESPED: Always check if enabled
+                if cfg_misc()["GunMacro"]["OnlyESPED"] then
+                    if not IsPlayerESPed(SilentTarget) then 
+                        ik_executing = false
+                        return 
+                    end
+                end
+                
+                -- K.O Check: Always check humanoid health
+                local targetHum = SilentTarget.Character:FindFirstChildOfClass("Humanoid")
+                if not targetHum or targetHum.Health <= 0 then 
+                    ik_executing = false
+                    return 
+                end
+                if targetHum:GetState() == Enum.HumanoidStateType.Dead then 
+                    ik_executing = false
+                    return 
+                end
+                
+                if not ik_executing then
+                    ik_executing = true
+                    gunMacroTarget = SilentTarget
+                    gun_index = 1
+                    last_shot_time = 0
+                    shots_fired = 0
+                    
+                    local backpack = lplr:FindFirstChild("Backpack")
+                    local character = lplr.Character
+                    if backpack and character then
+                        local currentTool = character:FindFirstChildOfClass("Tool")
+                        if currentTool then
+                            pcall(function() currentTool.Parent = backpack end)
+                        end
+                    end
+                end
+            end
+        end
+        
+        if not ik_executing then return end
+        if not lplr or not lplr.Character then return end
+        
+        -- CRITICAL: If gunMacroTarget is set (NoVisibleLimits mode), update aim immediately
+        if gunMacroTarget and gunMacroTarget.Character then
+            local targetPartName = "Head"
+            if shots_fired >= 1 then
+                targetPartName = "UpperTorso"
+            end
+            local targetPart = gunMacroTarget.Character:FindFirstChild(targetPartName)
+            if targetPart then
+                CachedAimPart = targetPart
+            end
+        end
+        
+        -- Only apply 2-shot limit for Click mode, not Hold mode
+        if cfg_misc()["GunMacro"]["Mode"] ~= "Hold" and shots_fired >= 2 then
+            ik_executing = false
+            ik_cooldown = 10
+            return
+        end
+        
+        -- Only apply 2-shot limit for Click mode
+        if cfg_misc()["GunMacro"]["Mode"] ~= "Hold" and shots_fired >= 2 then
+            ik_executing = false
+            gunMacroTarget = nil  -- Clear gun macro target
+            ik_cooldown = 10
+            return
+        end
+        
+        local closest_player = nil
+        
+        -- If gunMacroTarget is set (gun macro is firing), use that
+        if gunMacroTarget and gunMacroTarget.Character then
+            closest_player = gunMacroTarget
+        else
+            -- Otherwise, find closest ESPed player to cursor (normal gun pulling)
+            local closest_dist = math.huge
+            local mousePos = uis:GetMouseLocation()
+            
+            for _, player in pairs(GetPlayers()) do
+                if player == lplr then continue end
+                if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then continue end
+                if not IsPlayerESPed(player) then continue end
+                
+                local screenPos = c:WorldToViewportPoint(player.Character.HumanoidRootPart.Position)
+                if screenPos.Z <= 0 then continue end
+                
+                local cursor_dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                if cursor_dist < closest_dist then
+                    closest_dist = cursor_dist
+                    closest_player = player
+                end
+            end
+        end
+        
+        if not closest_player then return end
+        
+        local targetPartName = "Head"
+        if shots_fired >= 1 then
+            targetPartName = "UpperTorso"
+        end
+        
+        local targetPart = closest_player.Character:FindFirstChild(targetPartName)
+        if targetPart then
+            CachedAimPart = targetPart
+        end
+        
+        local gun_name = gun_sequence[gun_index]
+        local backpack = lplr:FindFirstChild("Backpack")
+        if not backpack then return end
+
+        -- Put away current gun before bringing out new one (Da Hood only - has gun swap cooldown)
+        local current_gun_name = gun_sequence[gun_index - 1]
+        if gun_index > 1 and current_gun_name then
+            local current_gun = lplr.Character:FindFirstChild(current_gun_name)
+            if current_gun then
+                pcall(function() current_gun.Parent = backpack end)
+                -- Add delay for Da Hood gun swap cooldown (Der Hood doesn't need delay)
+                if isDaHood then
+                    task.wait(getgenv().Euleon["DaHoodPullOutDelay"] or 0.2)
+                end
+            end
+        end
+
+        -- Pull out new gun
+        local gun_in_char = lplr.Character:FindFirstChild(gun_name)
+        if gun_in_char then
+            pcall(function() gun_in_char.Parent = backpack end)
+        end
+
+        local gun = backpack:FindFirstChild(gun_name)
+        if gun then
+            pcall(function() gun.Parent = lplr.Character end)
+            pcall(function() gun:Activate() end)  -- Fire immediately without wait
+
+            shots_fired = shots_fired + 1
+            last_shot_time = 1
+            gun_index = gun_index + 1
+        end
+    end))
+end
+
+
+-- AutoShoot: Automatically shoot ESPed players within range (ignores FOV and visibility)
+if cfg_misc()["AutoShoot"]["Enabled"] then
+    local autoShootCurrentTarget = nil
+    
+    table.insert(Euleon_Connections, rs.Heartbeat:Connect(function()
+        if not lplr or not lplr.Character then return end
+        
+        local lhrp = lplr.Character:FindFirstChild("HumanoidRootPart")
+        if not lhrp then return end
+        
+        local autoShootRange = cfg_misc()["AutoShoot"]["Range"]
+        local autoShootTarget = nil
+        local closestAutoShootDist = autoShootRange
+        
+        -- Find closest ESPed player within range
+        for _, espPlayerName in ipairs(_G.ESPFilteredPlayers) do
+            local player = plrs:FindFirstChild(espPlayerName)
+            if not player then continue end
+            
+            if not player.Character then continue end
+            
+            local thrp = player.Character:FindFirstChild("HumanoidRootPart")
+            if not thrp then continue end
+            
+            -- Check if alive
+            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+            if not humanoid or humanoid.Health <= 0 then continue end
+            
+            -- Find closest ESPed player
+            local distance = (thrp.Position - lhrp.Position).Magnitude
+            if distance <= closestAutoShootDist then
+                closestAutoShootDist = distance
+                autoShootTarget = player
+            end
+        end
+        
+        -- Update autoShoot target (only ESPed players in range)
+        autoShootCurrentTarget = autoShootTarget
+        
+        -- If found living ESPed player in range, set as target and shoot
+        if autoShootCurrentTarget and autoShootCurrentTarget.Character then
+            -- Double check they're still alive right before shooting
+            local targetHumanoid = autoShootCurrentTarget.Character:FindFirstChildOfClass("Humanoid")
+            if targetHumanoid and targetHumanoid.Health > 0 then
+                SilentTarget = autoShootCurrentTarget
+                CachedAimPart = autoShootCurrentTarget.Character:FindFirstChild("Head") or autoShootCurrentTarget.Character:FindFirstChild("UpperTorso")
+                if CachedAimPart then
+                    if getgenv().Euleon["Checks"]["WallCheck"] then
+                        if CamlockWallCheck(autoShootCurrentTarget) then
+                            CachedAimPosition = CachedAimPart.Position
+                        else
+                            CachedAimPosition = nil
+                        end
+                    else
+                        CachedAimPosition = CachedAimPart.Position
+                    end
+                else
+                    CachedAimPosition = nil
+                end
+                
+                local currentTool = lplr.Character:FindFirstChildOfClass("Tool")
+                if currentTool then
+                    pcall(function()
+                        currentTool:Activate()
+                    end)
+                end
+            else
+                -- Target is dead, clear everything
+                SilentTarget = nil
+                CachedAimPart = nil
+                CachedAimPosition = nil
+            end
+        else
+            -- No valid ESPed target in range, clear everything
+            SilentTarget = nil
+            CachedAimPart = nil
+            CachedAimPosition = nil
+        end
+    end))
+end
+
+
+if getgenv().Euleon["AnimationPack"]["Enabled"] and getgenv().Euleon["AnimationPack"]["Greet"]["Enabled"] then
+    local greetAnimationTrack = nil
+    local isGreeting = false
+    local greetKey = getgenv().Euleon["AnimationPack"]["Greet"]["Key"]
+    local greetAnimationId = getgenv().Euleon["AnimationPack"]["Greet"]["AnimationId"]
+    local greetPullKnife = getgenv().Euleon["AnimationPack"]["Greet"]["PullOutKnife"]
+    
+    local function pullOutKnifeFunc()
+        local backpack = lplr:FindFirstChild("Backpack")
+        local character = lplr.Character
+        
+        if not backpack or not character then return end
+        
+        local currentTool = character:FindFirstChildOfClass("Tool")
+        if currentTool then
+            currentTool.Parent = backpack
+            task.wait(0.1)
+        end
+        
+        local knifeInCharacter = character:FindFirstChild("[Knife]")
+        if knifeInCharacter then
+            knifeInCharacter.Parent = backpack
+            task.wait(0.1)
+        end
+        
+        local knifeInBackpack = backpack:FindFirstChild("[Knife]")
+        if knifeInBackpack then
+            knifeInBackpack.Parent = character
+            task.wait(0.05)
+        end
+    end
+    
+    local function playGreetAnimation()
+        if not lplr.Character then return end
+        
+        local humanoid = lplr.Character:FindFirstChild("Humanoid")
+        if not humanoid then return end
+        
+        if greetAnimationTrack then
+            greetAnimationTrack:Stop()
+        end
+        
+        local animation = Instance.new("Animation")
+        animation.AnimationId = greetAnimationId
+        
+        greetAnimationTrack = humanoid:LoadAnimation(animation)
+        greetAnimationTrack:Play()
+        isGreeting = true
+    end
+    
+    local function stopGreetAnimation()
+        if greetAnimationTrack and isGreeting then
+            greetAnimationTrack:Stop()
+            isGreeting = false
+        end
+    end
+    
+    table.insert(Euleon_Connections, uis.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.KeyCode == greetKey then
+            playGreetAnimation()
+            if greetPullKnife then
+                pullOutKnifeFunc()
+            end
+        end
+    end))
+    
+    table.insert(Euleon_Connections, uis.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if input.KeyCode == Enum.KeyCode.W or
+           input.KeyCode == Enum.KeyCode.A or
+           input.KeyCode == Enum.KeyCode.S or
+           input.KeyCode == Enum.KeyCode.D or
+           input.KeyCode == Enum.KeyCode.Space then
+            stopGreetAnimation()
+        end
+    end))
+    
+    if lplr.Character and lplr.Character:FindFirstChild("Humanoid") then
+        table.insert(Euleon_Connections, lplr.Character:FindFirstChild("Humanoid").StateChanged:Connect(function(oldState, newState)
+            if isGreeting then
+                if newState == Enum.HumanoidStateType.Running or
+                   newState == Enum.HumanoidStateType.Jumping or
+                   newState == Enum.HumanoidStateType.Freefall then
+                    stopGreetAnimation()
+                end
+            end
+        end))
+    end
+    
+    table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(newCharacter)
+        greetAnimationTrack = nil
+        isGreeting = false
+        
+        local humanoid = newCharacter:FindFirstChild("Humanoid")
+        if humanoid then
+            table.insert(Euleon_Connections, humanoid.StateChanged:Connect(function(oldState, newState)
+                if isGreeting then
+                    if newState == Enum.HumanoidStateType.Running or
+                       newState == Enum.HumanoidStateType.Jumping or
+                       newState == Enum.HumanoidStateType.Freefall then
+                        stopGreetAnimation()
+                    end
+                end
+            end))
+        end
+    end))
+    
+end
+
+
+
+
+local function EnableClientRemoveAccs()
+    getgenv().Euleon.Misc.ClientRemoveAccs.Enabled = true
+    hairDestroyed = true
+    if lplr.Character then
+        DestroyHairAndAccessories(lplr.Character)
+    end
+end
+
+local function DisableClientRemoveAccs()
+    getgenv().Euleon.Misc.ClientRemoveAccs.Enabled = false
+    hairDestroyed = false
+    if lplr.Character then
+        RestoreHairAndAccessories(lplr.Character)
+    end
+end
+
+getgenv().Euleon_EnableClientRemoveAccs = EnableClientRemoveAccs
+getgenv().Euleon_DisableClientRemoveAccs = DisableClientRemoveAccs
+
+-- Movement and Camlock Keybinds
+table.insert(Euleon_Connections, uis.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    -- SpeedWalk Toggle (E) - only if Enabled = true in config
+    if input.KeyCode == getgenv().Euleon["Movement"]["SpeedWalk"]["Key"] then
+        if getgenv().Euleon["Movement"]["SpeedWalk"]["Enabled"] then
+            speedwalkActive = not speedwalkActive
+        end
+    end
+
+    -- JumpPower Toggle (R) - only if Enabled = true in config
+    if input.KeyCode == getgenv().Euleon["Movement"]["JumpPower"]["Key"] then
+        if getgenv().Euleon["Movement"]["JumpPower"]["Enabled"] then
+            jumpowerActive = not jumpowerActive
+        end
+    end
+
+    -- Silent Aim Prediction Toggle (P)
+    if input.KeyCode == Enum.KeyCode.P then
+        getgenv().Euleon["Silent"]["Main"]["Prediction"]["Enabled"] = not getgenv().Euleon["Silent"]["Main"]["Prediction"]["Enabled"]
+    end
+    
+    -- Camlock Toggle (C) - only if Enabled = true in config
+    if input.KeyCode == getgenv().Euleon["Camlock"]["Key"] then
+        if getgenv().Euleon["Camlock"]["Enabled"] then
+            if camlockActive then
+                -- Turning off
+                camlockActive = false
+                camlockTarget = nil
+            else
+                -- Turning on - find closest player to cursor
+                camlockActive = true
+                camlockTarget = GetClosestPlayerToCursor()
+                if not camlockTarget then
+                    camlockActive = false
+                end
+            end
+        end
+    end
+    
+    -- Teleport to Closest Player (F)
+    if input.KeyCode == getgenv().Euleon["Movement"]["Teleport"]["Key"] then
+        if getgenv().Euleon["Movement"]["Teleport"]["Enabled"] then
+            if getgenv().Euleon["Movement"]["Teleport"]["HoldMode"] then
+                -- Hold mode: find target and anchor to them
+                if not teleportHolding then
+                    teleportHolding = true
+                    
+                    -- Find target on first press
+                    local targetPlayer = nil
+                    
+                    if getgenv().Euleon["Movement"]["Teleport"]["TargetESP"] then
+                        local mousePos = uis:GetMouseLocation()
+                        local closestDist = math.huge
+                        
+                        for _, espName in ipairs(_G.ESPFilteredPlayers) do
+                            local player = plrs:FindFirstChild(espName)
+                            if not player or not player.Character then continue end
+                            
+                            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                            if not hrp then continue end
+                            
+                            local screenPos = c:WorldToViewportPoint(hrp.Position)
+                            if screenPos.Z <= 0 then continue end
+                            
+                            local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                            if dist < closestDist then
+                                closestDist = dist
+                                targetPlayer = player
+                            end
+                        end
+                    else
+                        targetPlayer = GetClosestPlayerToCursor()
+                    end
+                    
+                    if targetPlayer and targetPlayer.Character then
+                        local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+                        local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+                        local humanoid = lplr.Character and lplr.Character:FindFirstChild("Humanoid")
+                        
+                        if targetHRP and lhrp and humanoid then
+                            -- Disable YOUR collisions so you don't move the target
+                            for _, part in pairs(lplr.Character:GetDescendants()) do
+                                if part:IsA("BasePart") then
+                                    holdModeCollisionsDisabled[part] = part.CanCollide
+                                    part.CanCollide = false
+                                end
+                            end
+                            
+                            -- Teleport to target ONCE
+                            lhrp.CFrame = targetHRP.CFrame
+                            task.wait(0.05)
+                            
+                            -- Set target
+                            teleportTarget = targetPlayer
+                            SilentTarget = targetPlayer
+                            
+                            -- Clear and recreate wall INSTANTLY
+                            removeWall()
+                            CreateSilentAimBox()
+                            
+                            -- NOW set holding to true
+                            teleportHolding = true
+
+                            -- Start anchor loop (InfiniteYield style - NOT desync, NOT spam heartbeat)
+                            task.spawn(function()
+                                repeat
+                                    if lplr and lplr.Character and teleportTarget and teleportTarget.Character then
+                                        local currentHRP = lplr.Character:FindFirstChild("HumanoidRootPart")
+                                        local currentTargetHRP = teleportTarget.Character:FindFirstChild("HumanoidRootPart")
+
+                                        if currentHRP and currentTargetHRP then
+                                            -- Anchor ME to THEM (like loopbring but reversed)
+                                            currentHRP.CFrame = currentTargetHRP.CFrame
+                                        end
+                                    end
+                                    task.wait(0.01)  -- Small delay between positioning
+                                until not teleportHolding
+                            end)
+                        end
+                    else
+                        teleportHolding = false
+                    end
+                end
+            else
+                -- Click mode: teleport once
+                local targetPlayer = nil
+                
+                -- TargetESP mode: closest ESPed player to cursor
+                if getgenv().Euleon["Movement"]["Teleport"]["TargetESP"] then
+                    local mousePos = uis:GetMouseLocation()
+                    local closestDist = math.huge
+                    
+                    for _, espName in ipairs(_G.ESPFilteredPlayers) do
+                        local player = plrs:FindFirstChild(espName)
+                        if not player or not player.Character then continue end
+                        
+                        local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                        if not hrp then continue end
+                        
+                        local screenPos = c:WorldToViewportPoint(hrp.Position)
+                        if screenPos.Z <= 0 then continue end
+                        
+                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                        if dist < closestDist then
+                            closestDist = dist
+                            targetPlayer = player
+                        end
+                    end
+                else
+                    -- Normal mode: any closest player to cursor
+                    targetPlayer = GetClosestPlayerToCursor()
+                end
+                
+                if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+                    if lhrp then
+                        -- PROPERLY REMOVE wall (disconnects wall_loop AND clears wall_parts)
+                        removeWall()
+                        
+                        -- Set SilentTarget to new target immediately
+                        SilentTarget = targetPlayer
+                        CachedAimPart = nil
+                        CachedAimPosition = nil
+                        closestPlayerRef = nil
+                        SilentTargetVisible = false
+                        fov_throttle = 0
+                        
+                        -- Teleport directly on top of target
+                        local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+                        if targetHRP then
+                            lhrp.CFrame = targetHRP.CFrame
+                        end
+
+                        -- Recreate wall fresh
+                        CreateSilentAimBox()
+                    end
+                end
+            end
+        end
+    end
+    
+    -- BypassVoidUsers Desync Teleport (Separate Key)
+    if input.KeyCode == getgenv().Euleon["Movement"]["Teleport"]["BypassVoidUsersKey"] then
+        if getgenv().Euleon["Movement"]["Teleport"]["Enabled"] then
+            -- BypassVoidUsers desync mode: find and lock onto target for orbiting desync
+            bypassVoidDesyncActive = true
+
+            -- Find target on first press
+            local targetPlayer = nil
+            
+            if getgenv().Euleon["Movement"]["Teleport"]["TargetESP"] then
+                local mousePos = uis:GetMouseLocation()
+                local closestDist = math.huge
+                
+                for _, espName in ipairs(_G.ESPFilteredPlayers) do
+                    local player = plrs:FindFirstChild(espName)
+                    if not player or not player.Character then continue end
+                    
+                    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                    if not hrp then continue end
+                    
+                    local screenPos = c:WorldToViewportPoint(hrp.Position)
+                    if screenPos.Z <= 0 then continue end
+                    
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    if dist < closestDist then
+                        closestDist = dist
+                        targetPlayer = player
+                    end
+                end
+            else
+                targetPlayer = GetClosestPlayerToCursor()
+            end
+            
+            if targetPlayer and targetPlayer.Character then
+                teleportTarget = targetPlayer
+                bypassVoidOrbitAngle = 0
+            else
+                bypassVoidDesyncActive = false
+            end
+        end
+    end
+end))
+
+-- Teleport Hold Mode Loop - Just maintain the anchor state (anchor loop runs in spawned task)
+table.insert(Euleon_Connections, rs.Heartbeat:Connect(function()
+    if not (teleportHolding and getgenv().Euleon["Movement"]["Teleport"]["Enabled"] and getgenv().Euleon["Movement"]["Teleport"]["HoldMode"]) then
+        return
+    end
+    
+    -- Anchor loop is running in spawned task, just maintain state
+    if not lplr or not lplr.Character or not teleportTarget or not teleportTarget.Character then
+        teleportHolding = false
+        teleportTarget = nil
+    end
+end))
+
+-- BypassVoidUsers Spectate Loop
+table.insert(Euleon_Connections, rs.Heartbeat:Connect(function()
+    if not (bypassVoidDesyncActive and getgenv().Euleon["Movement"]["Teleport"]["Enabled"]) then
+        return
+    end
+    
+    if not lplr or not lplr.Character or not teleportTarget or not teleportTarget.Character then
+        bypassVoidDesyncActive = false
+        teleportTarget = nil
+        pcall(function() c.CameraSubject = lplr.Character:FindFirstChild("Humanoid") end)
+        return
+    end
+
+    local lhrp = lplr.Character:FindFirstChild("HumanoidRootPart")
+    local targetHRP = teleportTarget.Character:FindFirstChild("HumanoidRootPart")
+    local targetHumanoid = teleportTarget.Character:FindFirstChild("Humanoid")
+
+    if not lhrp or not targetHRP or not targetHumanoid then
+        bypassVoidDesyncActive = false
+        teleportTarget = nil
+        pcall(function() c.CameraSubject = lplr.Character:FindFirstChild("Humanoid") end)
+        return
+    end
+
+    -- Check if key is still being held
+    local userInputService = game:GetService("UserInputService")
+    if not userInputService:IsKeyDown(getgenv().Euleon["Movement"]["Teleport"]["BypassVoidUsersKey"]) then
+        -- Key released - stop spectating
+        bypassVoidDesyncActive = false
+        teleportTarget = nil
+        pcall(function() c.CameraSubject = lplr.Character:FindFirstChild("Humanoid") end)
+        return
+    end
+    
+    -- Spectate the target
+    c.CameraSubject = targetHumanoid
+    
+    -- Orbit around target
+    bypassVoidOrbitAngle = bypassVoidOrbitAngle + 0.05
+    local orbitX = math.cos(bypassVoidOrbitAngle) * bypassVoidOrbitRadius
+    local orbitZ = math.sin(bypassVoidOrbitAngle) * bypassVoidOrbitRadius
+    local orbitOffset = Vector3.new(orbitX, 0, orbitZ)
+    
+    -- Move player to orbit around target (server sees you orbiting)
+    lhrp.CFrame = targetHRP.CFrame + orbitOffset
+end))
+
+-- BypassVoidUsers CFrame lock (keeps camera position fixed during orbit desync)
+local bypassVoidStoredCFrame = nil
+local bypassVoidCFrameHook
+bypassVoidCFrameHook = hookmetamethod(game, "__index", newcclosure(function(self, key)
+    if not checkcaller() and bypassVoidDesyncActive then
+        if key == "CFrame" and self == lplr.Character:FindFirstChild("HumanoidRootPart") then
+            if bypassVoidStoredCFrame then
+                return bypassVoidStoredCFrame
+            end
+        end
+    end
+    return bypassVoidCFrameHook(self, key)
+end))
+
+-- Store CFrame when entering BypassVoidUsers
+table.insert(Euleon_Connections, rs.Heartbeat:Connect(function()
+    if bypassVoidDesyncActive and lplr.Character then
+        local hrp = lplr.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            bypassVoidStoredCFrame = hrp.CFrame
+        end
+    else
+        bypassVoidStoredCFrame = nil
+    end
+end))
+
+-- Chams Loop (Target Outline) - Using Highlight
+table.insert(Euleon_Connections, rs.Heartbeat:Connect(function()
+    if not cfg_visuals()["Chams"]["Enabled"] then
+        -- Clean up highlight if Chams is disabled
+        if lastChamsTarget and lastChamsTarget.Character then
+            local highlight = lastChamsTarget.Character:FindFirstChild("ChamsHighlight")
+            if highlight then
+                pcall(function() highlight:Destroy() end)
+            end
+        end
+        lastChamsTarget = nil
+        return
+    end
+    
+    -- Get current target - only if it's valid and locked
+    local currentTarget = nil
+    
+    if SilentTarget and SilentTarget.Character then
+        local targetHRP = SilentTarget.Character:FindFirstChild("HumanoidRootPart")
+        local targetHumanoid = SilentTarget.Character:FindFirstChild("Humanoid")
+        local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+        
+        -- Verify target is actually valid
+        if targetHRP and targetHumanoid and lhrp and targetHumanoid.Health > 0 then
+            local distance = (targetHRP.Position - lhrp.Position).Magnitude
+            
+            -- Check if target is in valid range and locked
+            if distance <= 300 and CachedAimPart then
+                currentTarget = SilentTarget
+            end
+        end
+    end
+    
+    -- Clean up old target if changed
+    if lastChamsTarget ~= currentTarget then
+        if lastChamsTarget and lastChamsTarget.Character then
+            local highlight = lastChamsTarget.Character:FindFirstChild("ChamsHighlight")
+            if highlight then
+                pcall(function() highlight:Destroy() end)
+            end
+        end
+        lastChamsTarget = currentTarget
+    end
+    
+    -- Apply highlight to current valid target only
+    if currentTarget and currentTarget.Character then
+        if not currentTarget.Character:FindFirstChild("ChamsHighlight") then
+            local highlight = Instance.new("Highlight")
+            highlight.Name = "ChamsHighlight"
+            highlight.FillColor = cfg_visuals()["Chams"]["Color"]
+            highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+            highlight.FillTransparency = 0.5
+            highlight.OutlineTransparency = 0.1
+            highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            highlight.Adornee = currentTarget.Character
+            highlight.Parent = currentTarget.Character
+        end
+    end
+end))
+
+-- JumpPower on Character Spawn
+table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function(character)
+    task.wait(0.1)
+    -- Reset bypass void hook
+    bypassVoidHooked = false
+    if getgenv().Euleon["Movement"]["JumpPower"]["Enabled"] and jumpowerActive then
+        local humanoid = character:WaitForChild("Humanoid")
+        pcall(function()
+            humanoid.JumpPower = getgenv().Euleon["Movement"]["JumpPower"]["Power"]
+        end)
+        pcall(function()
+            humanoid.JumpHeight = getgenv().Euleon["Movement"]["JumpPower"]["Power"] * 0.5
+        end)
+    end
+end))
+
+
+-- Aggressive JumpPower Loop (Heartbeat)
+table.insert(Euleon_Connections, game:GetService("RunService").Heartbeat:Connect(function()
+    -- ONLY touch JumpPower if enabled AND active
+    if getgenv().Euleon["Movement"]["JumpPower"]["Enabled"] and jumpowerActive and lplr.Character then
+        local humanoid = lplr.Character:FindFirstChild("Humanoid")
+        if humanoid then
+            pcall(function()
+                humanoid.JumpPower = getgenv().Euleon["Movement"]["JumpPower"]["Power"]
+            end)
+            pcall(function()
+                humanoid.JumpHeight = getgenv().Euleon["Movement"]["JumpPower"]["Power"] * 0.5
+            end)
+        end
+    end
+    -- If disabled or not active, DON'T TOUCH JumpPower (let game control it)
+end))
+
+-- SpeedWalk Loop
+table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+    -- ONLY touch walkspeed if both Enabled AND speedwalkActive
+    if getgenv().Euleon["Movement"]["SpeedWalk"]["Enabled"] and speedwalkActive and lplr.Character then
+        local humanoid = lplr.Character:FindFirstChild("Humanoid")
+        if humanoid then
+            humanoid.WalkSpeed = getgenv().Euleon["Movement"]["SpeedWalk"]["Speed"]
+        end
+    end
+    -- If disabled or not active, DON'T TOUCH walkspeed at all (let game/tools control it)
+end))
+
+-- Intro display
+if getgenv().Euleon["Intro"] then
+    local function ShowIntro()
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "IntroLogo"
+        screenGui.ResetOnSpawn = false
+        screenGui.Parent = lplr:WaitForChild("PlayerGui")
+        
+        -- Main logo
+        local logoLabel = Instance.new("ImageLabel")
+        logoLabel.Name = "Logo"
+        logoLabel.Image = "rbxassetid://94671872956921"
+        logoLabel.Size = UDim2.new(0, 300, 0, 300)
+        logoLabel.Position = UDim2.new(0.5, -150, 0.5, -150)
+        logoLabel.BackgroundTransparency = 1
+        logoLabel.BorderSizePixel = 0
+        logoLabel.ImageTransparency = 1
+        logoLabel.Parent = screenGui
+        
+        -- Add drop shadow with offset
+        local shadowLabel = Instance.new("ImageLabel")
+        shadowLabel.Name = "Shadow"
+        shadowLabel.Image = "rbxassetid://94671872956921"
+        shadowLabel.Size = UDim2.new(0, 300, 0, 300)
+        shadowLabel.Position = UDim2.new(0.5, -145, 0.5, -145)
+        shadowLabel.BackgroundTransparency = 1
+        shadowLabel.BorderSizePixel = 0
+        shadowLabel.ImageTransparency = 1
+        shadowLabel.ImageColor3 = Color3.fromRGB(0, 0, 0)
+        shadowLabel.ZIndex = 0
+        shadowLabel.Parent = screenGui
+        
+        -- V3 Text Label
+        local versionText = Instance.new("TextLabel")
+        versionText.Name = "VersionText"
+        versionText.Text = "V3"
+        versionText.Size = UDim2.new(0, 120, 0, 60)
+        versionText.Position = UDim2.new(0.5, 50, 0.5, 35)
+        versionText.BackgroundTransparency = 1
+        versionText.BorderSizePixel = 0
+        versionText.TextColor3 = Color3.fromRGB(0, 0, 0)
+        versionText.TextSize = 36
+        versionText.Font = Enum.Font.GothamBold
+        versionText.TextTransparency = 1
+        versionText.Parent = screenGui
+        
+        -- Add teal outline to V3 only
+        local textStroke = Instance.new("UIStroke")
+        textStroke.Color = Color3.fromRGB(5, 160, 173)
+        textStroke.Thickness = 1.9
+        textStroke.Transparency = 1
+        textStroke.Parent = versionText
+        
+        local motionBlur = Instance.new("BlurEffect")
+        motionBlur.Size = 0
+        motionBlur.Parent = c
+        
+        -- play audio
+        local introSound = Instance.new("Sound")
+        introSound.SoundId = "rbxassetid://138890398994853"
+        introSound.Volume = 2
+        introSound.Parent = workspace
+        
+        local cleanupDone = false
+        
+        -- Cleanup function
+        local function DoCleanup()
+            if cleanupDone then return end
+            cleanupDone = true
+            pcall(function() screenGui:Destroy() end)
+            pcall(function() motionBlur:Destroy() end)
+            pcall(function() introSound:Destroy() end)
+        end
+        
+        task.wait(0.2)
+        introSound:Play()
+        
+        -- Fade in logo and shadow (2 seconds at 60fps)
+        for i = 0, 119 do
+            if not screenGui.Parent then DoCleanup() return end  -- Check if GUI was destroyed
+            
+            local progress = i / 120
+            logoLabel.ImageTransparency = 1 - progress
+            shadowLabel.ImageTransparency = 1 - progress * 0.4
+            motionBlur.Size = progress * 25
+            
+            -- Text slides in and fades after 1 second
+            if i >= 60 then
+                local slideProgress = (i - 60) / 60
+                versionText.Position = UDim2.new(0.5, 150 - (slideProgress * 100), 0.5, 35)
+                versionText.TextTransparency = 1 - slideProgress
+                textStroke.Transparency = 1 - slideProgress
+            end
+            
+            task.wait(1/60)
+        end
+        
+        if not screenGui.Parent then DoCleanup() return end
+        
+        -- Ensure final state
+        logoLabel.ImageTransparency = 0
+        shadowLabel.ImageTransparency = 0.6
+        versionText.Position = UDim2.new(0.5, 50, 0.5, 35)
+        versionText.TextTransparency = 0
+        textStroke.Transparency = 0
+        
+        -- Hold (2 seconds)
+        task.wait(2)
+        
+        if not screenGui.Parent then DoCleanup() return end
+        
+        -- Fade out everything (1.5 seconds at 60fps)
+        for i = 0, 89 do
+            if not screenGui.Parent then DoCleanup() return end
+            
+            local progress = i / 90
+            logoLabel.ImageTransparency = progress
+            shadowLabel.ImageTransparency = 0.6 + progress * 0.4
+            versionText.TextTransparency = progress
+            textStroke.Transparency = progress
+            motionBlur.Size = (1 - progress) * 25
+            introSound.Volume = 2 * (1 - progress)
+            
+            task.wait(1/60)
+        end
+        
+        DoCleanup()
+    end
+    
+    pcall(function()
+        ShowIntro()
+    end)
+end
+
+-- Watermark
+if getgenv().Euleon["Watermark"] then
+    local watermarkGui = Instance.new("ScreenGui")
+    watermarkGui.Name = "EuleonWatermark"
+    watermarkGui.ResetOnSpawn = false
+    watermarkGui.Parent = lplr:WaitForChild("PlayerGui")
+    
+    local watermarkText = Instance.new("TextLabel")
+    watermarkText.Name = "Watermark"
+    watermarkText.Text = "Euleon.win"
+    watermarkText.TextSize = 16
+    watermarkText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    watermarkText.BackgroundTransparency = 1
+    watermarkText.BorderSizePixel = 0
+    watermarkText.Position = UDim2.new(0, 10, 0, 10)
+    watermarkText.Size = UDim2.new(0, 200, 0, 30)
+    watermarkText.Font = Enum.Font.SourceSansBold
+    watermarkText.Parent = watermarkGui
+    
+    local textStroke = Instance.new("UIStroke")
+    textStroke.Color = Color3.fromRGB(0, 0, 0)
+    textStroke.Thickness = 2
+    textStroke.Parent = watermarkText
+    
+    table.insert(Euleon_Drawings, watermarkGui)
+end
+
+-- Animation Implementation
+local animationActive = false
+local currentAnimationTrack = nil
+local function playAnimation()
+    if not lplr or not lplr.Character then return end
+    
+    local humanoid = lplr.Character:FindFirstChild("Humanoid")
+    if not humanoid then return end
+    
+    local animationId = getgenv().Euleon["Animation"]["AnimationId"]
+    local animation = Instance.new("Animation")
+    animation.AnimationId = animationId
+    
+    if currentAnimationTrack then
+        pcall(function() currentAnimationTrack:Stop() end)
+    end
+    
+    currentAnimationTrack = humanoid:LoadAnimation(animation)
+    currentAnimationTrack.Looped = true
+    currentAnimationTrack:Play()
+end
+
+-- Animation Loop
+table.insert(Euleon_Connections, rs.Heartbeat:Connect(function()
+    if getgenv().Euleon["Animation"]["Enabled"] and animationActive then
+        if not currentAnimationTrack or not currentAnimationTrack.IsPlaying then
+            pcall(function() playAnimation() end)
+        end
+    else
+        if currentAnimationTrack then
+            pcall(function() currentAnimationTrack:Stop() end)
+            currentAnimationTrack = nil
+        end
+    end
+end))
+
+-- Animation Toggle
+table.insert(Euleon_Connections, uis.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if not getgenv().Euleon["Animation"]["Enabled"] then return end
+    if input.KeyCode == getgenv().Euleon["Animation"]["ToggleKey"] then
+        animationActive = not animationActive
+    end
+end))
+
+-- CFrame Fly Implementation
+local flyActive = false
+local CFloop = nil
+
+local function startFly()
+    if not lplr.Character then return end
+    
+    local humanoid = lplr.Character:FindFirstChildOfClass("Humanoid")
+    local head = lplr.Character:FindFirstChild("Head")
+    local hrp = lplr.Character:FindFirstChild("HumanoidRootPart")
+    
+    if not humanoid or not head or not hrp then return end
+    
+    humanoid.PlatformStand = true
+    
+    if CFloop then CFloop:Disconnect() end
+    
+    CFloop = rs.Heartbeat:Connect(function(deltaTime)
+        if not flyActive or not lplr.Character or not head.Parent then
+            stopFly()
+            return
+        end
+        
+        -- Prevent falling by zeroing velocity
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        
+        local moveDirection = humanoid.MoveDirection * (getgenv().Euleon["Movement"]["Fly"]["Speed"] * deltaTime)
+        local headCFrame = head.CFrame
+        local cameraCFrame = c.CFrame
+        
+        local cameraOffset = headCFrame:ToObjectSpace(cameraCFrame).Position
+        cameraCFrame = cameraCFrame * CFrame.new(-cameraOffset.X, -cameraOffset.Y, -cameraOffset.Z + 1)
+        
+        local cameraPosition = cameraCFrame.Position
+        local headPosition = headCFrame.Position
+        
+        local objectSpaceVelocity = CFrame.new(cameraPosition, Vector3.new(headPosition.X, cameraPosition.Y, headPosition.Z)):VectorToObjectSpace(moveDirection)
+        
+        -- Move head with camera
+        head.CFrame = CFrame.new(headPosition) * (cameraCFrame - cameraPosition) * CFrame.new(objectSpaceVelocity)
+        
+        -- Also move HumanoidRootPart to keep raycasts synchronized with actual position
+        -- But skip if BypassVoidUsers is active to preserve its orbit desync
+        if moveDirection.Magnitude > 0 and not bypassVoidDesyncActive then
+            hrp.CFrame = hrp.CFrame + moveDirection
+        end
+    end)
+end
+
+local function stopFly()
+    if not lplr.Character then return end
+    
+    local humanoid = lplr.Character:FindFirstChildOfClass("Humanoid")
+    
+    if humanoid then
+        humanoid.PlatformStand = false
+    end
+    
+    if CFloop then
+        CFloop:Disconnect()
+        CFloop = nil
+    end
+end
+
+-- Fly Toggle
+table.insert(Euleon_Connections, uis.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if not getgenv().Euleon["Movement"]["Fly"]["Enabled"] then return end
+    if input.KeyCode == getgenv().Euleon["Movement"]["Fly"]["Key"] then
+        flyActive = not flyActive
+        if flyActive then
+            startFly()
+        else
+            stopFly()
+        end
+    end
+end))
+
+-- Fly cleanup on respawn
+table.insert(Euleon_Connections, lplr.CharacterAdded:Connect(function()
+    if CFloop then CFloop:Disconnect() end
+    flyActive = false
+    animationActive = false
+    if currentAnimationTrack then
+        pcall(function() currentAnimationTrack:Stop() end)
+        currentAnimationTrack = nil
+    end
+end))
+
+-- TriggerBot Implementation (Identical to standalone - direct and reliable)
+local triggerBotPressed = false
+if getgenv().Euleon["TriggerBot"]["Enabled"] then
+    table.insert(Euleon_Connections, rs.RenderStepped:Connect(function()
+        if not getgenv().Euleon["TriggerBot"]["Enabled"] then
+            if triggerBotPressed then
+                triggerBotPressed = false
+                mouse1release()
+            end
+            return
+        end
+
+        -- Check if hold key is pressed (support both KeyCode and UserInputType)
+        local holdKey = getgenv().Euleon["TriggerBot"]["HoldKey"]
+        local keyPressed = false
+
+        if holdKey == Enum.UserInputType.MouseButton1 or holdKey == Enum.UserInputType.MouseButton2 then
+            keyPressed = uis:IsMouseButtonPressed(holdKey)
+        else
+            -- Assume it's a KeyCode
+            keyPressed = uis:IsKeyDown(holdKey)
+        end
+
+        if not keyPressed then
+            if triggerBotPressed then
+                triggerBotPressed = false
+                mouse1release()
+            end
+            return
+        end
+
+        local target = mouse.Target
+        if not target then
+            if triggerBotPressed then
+                triggerBotPressed = false
+                mouse1release()
+            end
+            return
+        end
+
+        local char = target:FindFirstAncestorOfClass("Model")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local targetPlayer = char and plrs:GetPlayerFromCharacter(char)
+
+        if not hum or hum.Health <= 0 or targetPlayer == lplr then
+            if triggerBotPressed then
+                triggerBotPressed = false
+                mouse1release()
+            end
+            return
+        end
+
+        -- Check if whitelisted
+        for _, whitelistedName in pairs(_G.ESPWhitelistedPlayers) do
+            if targetPlayer.Name == whitelistedName then
+                if triggerBotPressed then
+                    triggerBotPressed = false
+                    mouse1release()
+                end
+                return
+            end
+        end
+
+        -- Check team if enabled
+        if getgenv().Euleon["TriggerBot"]["TeamCheck"] and targetPlayer.Team == lplr.Team then
+            if triggerBotPressed then
+                triggerBotPressed = false
+                mouse1release()
+            end
+            return
+        end
+
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then
+            if triggerBotPressed then
+                triggerBotPressed = false
+                mouse1release()
+            end
+            return
+        end
+
+        -- Distance check
+        local lhrp = lplr.Character and lplr.Character:FindFirstChild("HumanoidRootPart")
+        if not lhrp or (root.Position - lhrp.Position).Magnitude > getgenv().Euleon["TriggerBot"]["MaxDistance"] then
+            if triggerBotPressed then
+                triggerBotPressed = false
+                mouse1release()
+            end
+            return
+        end
+
+        -- Visible check
+        if getgenv().Euleon["TriggerBot"]["VisibleCheck"] then
+            if not CamlockWallCheck(targetPlayer) then
+                if triggerBotPressed then
+                    triggerBotPressed = false
+                    mouse1release()
+                end
+                return
+            end
+        end
+
+        -- All checks passed - hold down mouse button to shoot continuously
+        if not triggerBotPressed then
+            triggerBotPressed = true
+            mouse1press()
+        end
+    end))
+end
+
+-- Unload function
+getgenv().UnloadEuleon = function()
+    if getgenv().Euleon_Connections then
+        for _, connection in ipairs(getgenv().Euleon_Connections) do
+            pcall(function() connection:Disconnect() end)
+        end
+        getgenv().Euleon_Connections = {}
+    end
+    if getgenv().Euleon_Drawings then
+        for _, drawing in ipairs(getgenv().Euleon_Drawings) do
+            pcall(function() drawing:Remove() end)
+        end
+        getgenv().Euleon_Drawings = {}
+    end
+    getgenv().Euleon = nil
+end
+
+local function Euleon_Cleanup()
+    removeWall()
+    
+    if targetDeathConnection then
+        targetDeathConnection:Disconnect()
+        targetDeathConnection = nil
+    end
+    
+    for key, _ in pairs(beamDefaults) do
+        beamDefaults[key] = nil
+    end
+    
+    hairDestroyed = false
+    if lplr.Character then
+        RestoreHairAndAccessories(lplr.Character)
+    end
+    
+    camlockActive = false
+    camlockTarget = nil
+    speedwalkActive = false
+    jumpowerActive = false
+    bypassVoidDesyncActive = false
+    teleportTarget = nil
+    
+    -- Reset camera to player
+    pcall(function()
+        if lplr and lplr.Character then
+            c.CameraSubject = lplr.Character:FindFirstChild("Humanoid")
+        end
+    end)
+    
+    -- Stop animation
+    if currentAnimationTrack then
+        pcall(function() currentAnimationTrack:Stop() end)
+        currentAnimationTrack = nil
+    end
+    
+    for _, conn in ipairs(Euleon_Connections) do pcall(function() conn:Disconnect() end) end
+    for _, draw in ipairs(Euleon_Drawings) do pcall(function() draw:Remove() end) end
+    Euleon_Connections = {}
+    Euleon_Drawings = {}
+    beamDefaults = {}
+    monitoredPlayers = {}
+    getgenv().Euleonload = nil
+    getgenv().Euleon_Cleanup = nil
+end
+
+if getgenv().Euleonload then
+    if getgenv().Euleon_Cleanup then getgenv().Euleon_Cleanup() end
+end
+
+table.insert(Euleon_Connections, uis.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.F then
+        if wall then
+            removeWall()
+        else
+            createWall()
+        end
+    elseif input.KeyCode == Enum.KeyCode.Delete then
+        removeWall()
+        Euleon_Cleanup()
+    end
+end))
+
+
+
+getgenv().Euleon_Cleanup = Euleon_Cleanup
+getgenv().Euleonload = true
+
+-- =============================================================
+-- GAME-SPECIFIC CONFIGURATION
+-- =============================================================
+
+if isDaHood then
+    -- Da Hood: Extended bullet enabled - distance controlled by config
+    getgenv().Euleon["ExtendedBullet"]["Enabled"] = true
+    -- Da Hood: Gun pull out delay for weapon swap cooldown
+    getgenv().Euleon["DaHoodPullOutDelay"] = 0.2
+end
